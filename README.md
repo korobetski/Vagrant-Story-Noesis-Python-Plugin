@@ -8,3 +8,5 @@ Vagrant Story files formats are mostly explained here : http://datacrystal.romha
 
 - .WEP OK
 - .SHP reader is fully fonctionnal but not the modelization...  
+
+<img src="https://github.com/korobetski/Vagrant-Story-Noesis-Python-Plugin/raw/master/weapon_demo.jpg"/>
