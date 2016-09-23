@@ -11,6 +11,11 @@ import rapi
 #registerNoesisTypes is called by Noesis to allow the script to register formats.
 #Do not implement this function in script files unless you want them to be dedicated format modules!
 def registerNoesisTypes():
+	handle = noesis.register("Vagrant Story Weapon", ".WEP")
+	noesis.setHandlerTypeCheck(handle, noepyCheckType)
+	noesis.setHandlerLoadModel(handle, vsLoadWeapon)
+	noesis.setHandlerWriteModel(handle, vsWriteWeapon)
+	
 	handle = noesis.register("Vagrant Story Shape", ".SHP")
 	noesis.setHandlerTypeCheck(handle, noepyCheckType)
 	noesis.setHandlerLoadModel(handle, noepyLoadModel)
@@ -38,14 +43,180 @@ def noepyCheckType(data):
 		
 	return 1
 
+
+def vsLoadWeapon(data, mdlList):
+	bs = NoeBitStream(data)
+	bs.seek(0x4, NOESEEK_REL) # signiture "H01"
+	numBones = bs.read('B')[0] # number of joints in the skeleton
+	numGroups = bs.read('B')[0] # number of groups
+	numTri = bs.read('H')[0] # number of triangles in the first polygon group
+	numQuad = bs.read('H')[0] # number of quads in the second polygon group
+	numFace = bs.read('H')[0] # number of nemain polygons (which are further grouped into triangles and quads)
+	numPoly = numTri+numQuad+numFace
+	
+	print("numBones : "+str(numBones))
+	print("numGroups : "+str(numGroups))
+	print("numTri : "+str(numTri))
+	print("numQuad : "+str(numQuad))
+	print("numFace : "+str(numFace))
+	print("numPoly : "+str(numPoly))
+	
+	texturePtr1 = bs.read('I')[0]+0x10 #pointer to texture - $10
+	bs.seek(0x30, NOESEEK_REL) # Unknown (always zero)
+	texturePtr = int(bs.read('I')[0])+0x10 #relative pointer to texture section - $10
+	groupPtr = bs.read('I')[0]+0x10
+	vertexPtr = bs.read('I')[0]+0x10
+	polygonPtr = bs.read('I')[0]+0x10
+	
+	bones = []
+	for i in range(0, numBones):
+		bone_data = noepyReadBone(bs, i)
+		bones.append(bone_data)
+	
+	if groupPtr != bs.getOffset():
+		bs.setOffset(groupPtr)
+	groups = []
+	for i in range(0, numGroups):
+		group_data = noepyReadGroup(bs, bones)
+		groups.append(group_data)
+	
+	if vertexPtr != bs.getOffset():
+		bs.setOffset(vertexPtr)
+	numGroups = len(groups)
+	numVertices = groups[ numGroups - 1 ].vertex
+	print("numVertices : "+str(numVertices))
+	vertexs = []
+	g = 0	
+	for i in range(0, numVertices):
+		if i >= groups[g].vertex:
+			g = g+1
+		
+		vGroup = groups[g]
+		vBone = groups[g].boneId
+		vertex_data = noepyReadVertex(bs, g, vGroup, vBone, i)
+		vertexs.append(vertex_data)
+	
+	polygones = []
+	polyPtr = bs.getOffset();
+	for i in range(0, numPoly):
+		poly = VS_POLY(bs, vertexs)
+		if poly.polyType == 0x24:
+			if poly.polySide == 8: # double
+				polygones.append(Polygone(0x24, poly.polySize, poly.polySide, poly.polyAlpha, [poly.v[2], poly.v[1], poly.v[0]], [poly.uv[0], poly.uv[2], poly.uv[1]]))
+				polygones.append(Polygone(0x24, poly.polySize, poly.polySide, poly.polyAlpha, [poly.v[0], poly.v[1], poly.v[2]], [poly.uv[2], poly.uv[1], poly.uv[0]]))
+			else:
+				polygones.append(Polygone(0x24, poly.polySize, poly.polySide, poly.polyAlpha, [poly.v[2], poly.v[1], poly.v[0]], [poly.uv[0], poly.uv[2], poly.uv[1]]))
+		elif poly.polyType == 0x2C:
+			if poly.polySide == 8: # double
+				poly1 = Polygone(0x24, poly.polySize/2, poly.polySide, poly.polyAlpha, [poly.v[2], poly.v[1], poly.v[0]], [poly.uv[2], poly.uv[1], poly.uv[0]])
+				poly2 = Polygone(0x24, poly.polySize/2, poly.polySide, poly.polyAlpha, [poly.v[1], poly.v[2], poly.v[3]], [poly.uv[1], poly.uv[2], poly.uv[3]])
+				poly3 = Polygone(0x24, poly.polySize/2, poly.polySide, poly.polyAlpha, [poly.v[0], poly.v[1], poly.v[2]], [poly.uv[0], poly.uv[1], poly.uv[2]])
+				poly4 = Polygone(0x24, poly.polySize/2, poly.polySide, poly.polyAlpha, [poly.v[3], poly.v[2], poly.v[1]], [poly.uv[3], poly.uv[2], poly.uv[1]])
+				polygones.append(poly1)
+				polygones.append(poly2)
+				polygones.append(poly3)
+				polygones.append(poly4)
+			else:
+				poly1 = Polygone(0x24, poly.polySize/2, poly.polySide, poly.polyAlpha, [poly.v[2], poly.v[1], poly.v[0]], [poly.uv[2], poly.uv[1], poly.uv[0]])
+				poly2 = Polygone(0x24, poly.polySize/2, poly.polySide, poly.polyAlpha, [poly.v[1], poly.v[2], poly.v[3]], [poly.uv[1], poly.uv[2], poly.uv[3]])
+				polygones.append(poly1)
+				polygones.append(poly2)
+	
+	print("polygones len ? : "+str(len(polygones)))
+	
+	
+	print("texturePtr1 : "+str(texturePtr1))
+	print("texturePtr : "+str(texturePtr))
+	print("texturePtr ? : "+str(bs.getOffset()))
+	
+	
+	texMapSize = bs.read('I')[0]
+	print("texMapSize : "+str(texMapSize))
+	unk = bs.read('B')[0] #unknown
+	halfW = bs.read('B')[0] #half the width in pixels
+	print("halfW : "+str(halfW))
+	halfH = bs.read('B')[0] #half the height in pixels
+	print("halfH : "+str(halfH))
+	numColor = bs.read('B')[0] #number of colours per pallet
+	print("numColor : "+str(numColor))
+	#.WEP 7 pallets
+	palletColors = []
+	textures = []
+	
+	handleColors = []
+	for j in range(0, int(numColor/3)):
+		colorData = bs.readBits(16)
+		handleColors.append(colorData)
+			
+	for i in range(0, 7):
+		colors = []
+		colors = colors+handleColors
+		for j in range(0, int(numColor/3*2)):
+			colorData = bs.readBits(16)
+			colors.append(colorData)
+		textures.append(NoeTexture("tex_"+str(i), halfW*2, halfH*2, None))
+		palletColors.append(colors)
+	
+	
+	cluts = []
+	for x in range(0, halfW*2):
+		for y in range(0, halfH*2):
+			clut = bs.read('B')[0] #CLUT colour reference
+			cluts.append(clut)
+	
+	materials = []
+	for i in range(0, 7):
+		pixmap = []
+		for j in range(0, len(cluts)):
+			pixmap = pixmap + color16to32(palletColors[i][int(cluts[j])])
+		
+		texByteArray = bytearray(pixmap)
+		textures[i].pixelData = texByteArray
+		#texName = rapi.getInputName()+"_pal_"+str(i)+".png"
+		#if (rapi.checkFileExists(texName) == False):
+		#noesis.saveImageRGBA(texName, textures[i])
+		materials.append(NoeMaterial("mat_"+str(i), "tex_"+str(i)))
+	
+	
+	texList = textures
+	
+	meshes = []	
+	posList = []
+	idxList = []
+	uvList = []	
+	for i in range(0, numVertices):
+		posList.append(NoeVec3([vertexs[i].x, vertexs[i].y, vertexs[i].z]))
+		uvList.append(NoeVec3())
+	
+	for i in range(0, len(polygones)):
+		for j in range(0, 3):
+			#idxList.append(len(posList))
+			#posList.append(NoeVec3([polygones[i].v[j].x, polygones[i].v[j].y, polygones[i].v[j].z]))
+			idxList.append(polygones[i].v[j].idx)
+			uv = NoeVec3([polygones[i].uv[j][0]/halfW/2, polygones[i].uv[j][1]/halfH/2, 0])
+			uvList[polygones[i].v[j].idx] = uv
+	
+	mesh = NoeMesh(idxList, posList, "mesh_0", "mat_2")
+	mesh.uvs = uvList
+	meshes.append(mesh)	
+	
+	NMM = NoeModelMaterials(textures, materials)
+	#class NoeModel:
+	#def __init__(self, meshes = [], bones = [], anims = [], modelMats = None):
+	mdl = NoeModel(meshes, bones, [], NMM)
+	mdl.setBones(bones)
+	mdlList.append(mdl)
+	
+	return 1
+
+def vsWriteWeapon(mdl, bs):
+	return 1
+
 #load the model
 def noepyLoadModel(data, mdlList):
 	ctx = rapi.rpgCreateContext()
 	bs = NoeBitStream(data)
-	if bs.readInt() != NOEPY_HEADER:
-		return 0
-	#if bs.readInt() != NOEPY_VERSION:
-		#return 0
+	bs.seek(0x4, NOESEEK_REL) #signiture "H01"
 	numJoints = bs.read('b')[0]
 	numGroups = bs.read('b')[0]
 	numTri = bs.read('h')[0]
@@ -137,17 +308,34 @@ def noepyLoadModel(data, mdlList):
 	
 	# vertex OK
 	
+	
 	polygones = []
 	polyPtr = bs.getOffset();
 	for i in range(0, numPoly):
 		poly = VS_POLY(bs, vertexs)
 		if poly.polyType == 0x24:
-			polygones.append(Polygone(0x24, poly.polySize, poly.polySide, poly.polyAlpha, [poly.v[2], poly.v[1], poly.v[0]], [poly.uv[2], poly.uv[1], poly.uv[0]]))
+			if poly.polySide == 8: # double
+				print("poly.polySide : "+str(poly.polySide))
+				polygones.append(Polygone(0x24, poly.polySize, poly.polySide, poly.polyAlpha, [poly.v[0], poly.v[1], poly.v[2]], [poly.uv[0], poly.uv[1], poly.uv[2]]))
+				polygones.append(Polygone(0x24, poly.polySize, poly.polySide, poly.polyAlpha, [poly.v[2], poly.v[1], poly.v[0]], [poly.uv[2], poly.uv[1], poly.uv[0]]))
+			else:
+				polygones.append(Polygone(0x24, poly.polySize, poly.polySide, poly.polyAlpha, [poly.v[0], poly.v[1], poly.v[2]], [poly.uv[0], poly.uv[1], poly.uv[2]]))
 		elif poly.polyType == 0x2C:
-			poly1 = Polygone(0x24, poly.polySize/2, poly.polySide, poly.polyAlpha, [poly.v[0], poly.v[1], poly.v[2]], [poly.uv[0], poly.uv[1], poly.uv[2]])
-			poly2 = Polygone(0x24, poly.polySize/2, poly.polySide, poly.polyAlpha, [poly.v[1], poly.v[2], poly.v[3]], [poly.uv[1], poly.uv[2], poly.uv[3]])
-			polygones.append(poly1)
-			polygones.append(poly2)
+			if poly.polySide == 8: # double
+				print("poly.polySide : "+str(poly.polySide))
+				poly1 = Polygone(0x24, poly.polySize/2, poly.polySide, poly.polyAlpha, [poly.v[0], poly.v[1], poly.v[2]], [poly.uv[0], poly.uv[1], poly.uv[2]])
+				poly2 = Polygone(0x24, poly.polySize/2, poly.polySide, poly.polyAlpha, [poly.v[1], poly.v[2], poly.v[3]], [poly.uv[1], poly.uv[2], poly.uv[3]])
+				poly3 = Polygone(0x24, poly.polySize/2, poly.polySide, poly.polyAlpha, [poly.v[2], poly.v[1], poly.v[0]], [poly.uv[2], poly.uv[1], poly.uv[0]])
+				poly4 = Polygone(0x24, poly.polySize/2, poly.polySide, poly.polyAlpha, [poly.v[3], poly.v[2], poly.v[1]], [poly.uv[3], poly.uv[2], poly.uv[1]])
+				polygones.append(poly1)
+				polygones.append(poly2)
+				polygones.append(poly3)
+				polygones.append(poly4)
+			else:
+				poly1 = Polygone(0x24, poly.polySize/2, poly.polySide, poly.polyAlpha, [poly.v[0], poly.v[1], poly.v[2]], [poly.uv[0], poly.uv[1], poly.uv[2]])
+				poly2 = Polygone(0x24, poly.polySize/2, poly.polySide, poly.polyAlpha, [poly.v[1], poly.v[2], poly.v[3]], [poly.uv[1], poly.uv[2], poly.uv[3]])
+				polygones.append(poly1)
+				polygones.append(poly2)
 	
 	print("polygones len ? : "+str(len(polygones)))
 	meshes = []
@@ -189,31 +377,45 @@ def noepyLoadModel(data, mdlList):
 	numColor = bs.read('B')[0] #number of colours per pallet
 	print("numColor ? : "+str(numColor))
 	#.SHP always with 2 pallets
+	palletColors = []
+	textures = []
 	for i in range(0, 2):
+		colors = []
 		for j in range(0, numColor):
 			colorData = bs.readBits(16)
+			colors.append(colorData)
+			textures.append(NoeTexture("Texture_"+str(i), halfW*2, halfH*2, None))
+		palletColors.append(colors)
 	
-	for i in range(0, halfW*2):
-		for j in range(0, halfH*2):
+	
+	cluts = []
+	for x in range(0, halfW*2):
+		for y in range(0, halfH*2):
 			clut = bs.read('B')[0] #CLUT colour reference
+			cluts.append(clut)
+	
+	materials = []
+	for i in range(0, 2):
+		pixmap = []
+		for j in range(0, len(cluts)):
+			pixmap = pixmap + color16to32(palletColors[i][cluts[j]])
+			
+		texByteArray = bytearray(pixmap)
+		textures[i].pixelData = texByteArray
+		texName = rapi.getInputName()+"_pal_"+str(i)+".png"
+		if (rapi.checkFileExists(texName) == False):
+			noesis.saveImageRGBA(texName, textures[i])
+		materials.append(NoeMaterial(texName, texName))
 	
 	anims = []
 	
-	mdl = NoeModel(meshes, bones, anims)
+	mesh = NoeMesh(idxList, posList, "mesh_0", materials[0].name)
+	mesh.uvs = uvList
+	meshes.append(mesh)	
 	
-	#bs.setOffset(vrtPtr)
-	#posBuff = bs.readBytes(numVertices*8)
-	#rapi.rpgBindPositionBuffer(posBuff, noesis.RPGEODATA_SHORT, 8)
-	#bs.setOffset(polyPtr)
-	#triBuff = bs.readBytes(190*0x10)
-	#rapi.rpgCommitTriangles(None, noesis.RPGEODATA_UBYTE, numVertices, noesis.RPGEO_POINTS, 1)
-	#rapi.rpgClearBufferBinds()
-	#mdl = rapi.rpgConstructModel()
-	#rapi.rpgSetMaterial("tex_00.png")
-	
+	mdl = NoeModel(meshes, bones)
 	mdl.setBones(bones)
-	mdlList.append(mdl)			#important, don't forget to put your loaded model in the mdlList
-
+	mdlList.append(mdl)
 	
 	return 1
 
@@ -314,13 +516,18 @@ def noepyReadBone(bs, index):
 	boneIndex = index
 	boneName = "bone_"+str(index)
 	boneSize = -int(bs.read('i')[0])
-	bonePIndex = bs.read('b')[0]
+	#bs.seek(0x2, NOESEEK_REL)
+	bonePIndex = bs.read('B')[0]
 	bonePName = "bone_"+str(bonePIndex)
 	
 	boneX = bs.read('b')[0]
 	boneY = bs.read('b')[0]
 	boneZ = bs.read('b')[0]
-	boneMode = bs.read('b')[0]
+	# mode
+	# 0 - 2 normal ?
+	# 3 - 6 normal + roll 90 degrees
+	# 7 - 255 absolute, different angles
+	boneMode = bs.read('B')[0]
 	#boneMat = NoeMat43([NoeVec3((boneX, 0.0, 0.0)), NoeVec3((0.0, boneY, 0.0)), NoeVec3((0.0, 0.0, boneZ)), NoeVec3((1.0, 0.0, 0.0))])
 	boneMat = NoeMat43()
 	bs.seek(0x7, NOESEEK_REL)
@@ -369,6 +576,7 @@ def VS_POLY(bs, vertexs):
 	polySize = bs.read('b')[0]
 	polySide = bs.read('b')[0]
 	polyAlpha = bs.read('b')[0]
+	polyCount = 3
 	if polyType == 0x24:
 		polyCount = 3
 	elif polyType == 0x2C:
@@ -379,6 +587,16 @@ def VS_POLY(bs, vertexs):
 		v.append(vertexs[int(idx)])
 	uv = []
 	for i in range(0, polyCount):
-		uv.append([bs.read('b')[0], bs.read('b')[0]])
+		uv.append([bs.read('B')[0], bs.read('B')[0]])
 	return Polygone(polyType, polySize, polySide, polyAlpha, v, uv)
 
+
+def color16to32( c ):
+	b = ( c & 0x7C00 ) >> 10
+	g = ( c & 0x03E0 ) >> 5
+	r = ( c & 0x001F )
+	if c == 0 :
+		return [ 0, 0, 0, 0 ]
+	
+	#5bit -> 8bit is factor 2^3 = 8
+	return [ r * 8, g * 8, b * 8, 255 ]
