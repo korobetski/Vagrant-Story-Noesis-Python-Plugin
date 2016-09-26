@@ -6,7 +6,9 @@ Noesis can be found here : http://richwhitehouse.com/index.php?content=inc_proje
 
 Vagrant Story files formats are mostly explained here : http://datacrystal.romhacking.net/wiki/Vagrant_Story:File_formats
 
+
 - .WEP OK
-- .SHP reader is fully fonctionnal but not the modelization...  
+- .SHP reader is fully fonctionnal but not the modelization... 
+- .SEQ started but... hard
 
 <img src="https://github.com/korobetski/Vagrant-Story-Noesis-Python-Plugin/raw/master/weapon_demo.jpg"/>
