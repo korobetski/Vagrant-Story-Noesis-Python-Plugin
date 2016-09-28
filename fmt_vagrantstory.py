@@ -39,6 +39,7 @@ def VSLoadWeapon(data, mdlList):
 	bs = NoeBitStream(data)
 	h, numBones, numGroups, numTri, numQuad, numFace = bs.read("i2B3H")
 	numPoly = numTri+numQuad+numFace
+	print("numBones : "+str(numBones)+" 	numGroups : "+str(numGroups)+" 	numTri : "+str(numTri)+" 	numQuad : "+str(numQuad)+" 	numFace : "+str(numFace))
 
 	texturePtr1 = bs.read('I')[0]+0x10 #pointer to texture - $10
 	bs.seek(0x30, NOESEEK_REL) # Unknown (always zero)
@@ -57,12 +58,19 @@ def VSLoadWeapon(data, mdlList):
 	if vertexPtr != bs.getOffset():
 		bs.setOffset(vertexPtr)
 	vertices = VSVertexSection(bs, groups, VSbones)
-	faces = VSFacesSection(bs, numPoly)
+	faces = VSFacesSection(bs, numPoly, numGroups, numTri, numQuad, len(vertices))
 
+
+	if texturePtr != bs.getOffset():
+		bs.setOffset(texturePtr)
 	textures = VSTexturesSection(bs, True, False)
 	materials = []
 	for i in range(0, len(textures)):
-		materials.append(NoeMaterial("mat_"+str(i), textures[i].name))
+		mat = NoeMaterial("mat_"+str(i), textures[i].name)
+		#mat.setBlendMode("GL_ONE", "GL_SRC_ALPHA")
+		#mat.setDiffuseColor(NoeVec3())
+		#mat.setFlags(1<<5)
+		materials.append(mat)
 	meshes = VSBuildModel(bones, groups, vertices, faces, textures, materials)
 
 	anims = []
@@ -76,6 +84,8 @@ def VSLoadModel(data, mdlList):
 	bs = NoeBitStream(data)
 	h, numBones, numGroups, numTri, numQuad, numFace = bs.read("i2B3H")
 	numPoly = numTri+numQuad+numFace
+
+	print("numBones : "+str(numBones)+" 	numGroups : "+str(numGroups)+" 	numTri : "+str(numTri)+" 	numQuad : "+str(numQuad)+" 	numFace : "+str(numFace))
 
 	overlays = []
 	for i in range(0, 8):
@@ -122,25 +132,34 @@ def VSLoadModel(data, mdlList):
 
 	if vertexPtr != bs.getOffset():
 		bs.setOffset(vertexPtr)
+	
 	vertices = VSVertexSection(bs, groups, VSbones)
-	faces = VSFacesSection(bs, numPoly)
 
+	print("faces : "+str(polygonPtr)+" <--> "+str(bs.getOffset()))
+	faces = VSFacesSection(bs, numPoly, numGroups, numTri, numQuad, len(vertices))
+
+	print("AKAO : "+str(AKAOPtr)+" <--> "+str(bs.getOffset()))
+	if AKAOPtr != bs.getOffset():
+		bs.setOffset(AKAOPtr)
 	akaoPtr = bs.getOffset();
 	bs.setOffset(magicPtr);
 	bs.seek(0x4, NOESEEK_REL)
 	magicNum = bs.read('i')[0]
 	bs.seek(magicNum, NOESEEK_REL)
 
-	textures = VSTexturesSection(bs, False, False)
+	
+	textures = VSTexturesSection(bs, False, True)
 	materials = []
 	for i in range(0, len(textures)):
 		materials.append(NoeMaterial("mat_"+str(i), textures[i].name))
+
 	meshes = VSBuildModel(bones, groups, vertices, faces, textures, materials)
 
 	anims = []
 	NMM = NoeModelMaterials(textures, materials)
 	mdl = NoeModel(meshes, bones, anims, NMM)
 	mdlList.append(mdl)
+	print("//--------------------------------")
 	return 1
 
 
@@ -186,6 +205,7 @@ def VSLoadSequence(data, mdlList):
 
 
 def VSBoneSection(bs, numBones):
+	#print("VSBoneSection #"+str(bs.getOffset()))
 	bones = []
 	for i in range(0, numBones):
 		bone = VSBone()
@@ -194,6 +214,7 @@ def VSBoneSection(bs, numBones):
 	return bones
 
 def VSGroupSection(bs, numGroups, bones):
+	#print("VSGroupSection #"+str(bs.getOffset()))
 	groups = []
 	for i in range(0, numGroups):
 		group = VSGroup()
@@ -204,6 +225,7 @@ def VSGroupSection(bs, numGroups, bones):
 def VSVertexSection(bs, groups, bones):
 	vertices = []
 	numVertices = groups[ len(groups) - 1 ].numVertices
+	#print("VSVertexSection #"+str(bs.getOffset())+" 	numV : "+str(numVertices))
 	g = 0	
 	for i in range(0, numVertices):
 		if i >= groups[g].numVertices:
@@ -217,12 +239,32 @@ def VSVertexSection(bs, groups, bones):
 
 	return vertices
 
-def VSFacesSection(bs, numPoly):
+def VSFacesSection(bs, numPoly, numGroups, numTri, numQuad, vertices):
+	#print("VSFacesSection #"+str(bs.getOffset()))
 	faces = []
 	for i in range(0, numPoly):
 		face = VSFace()
 		face.default()
-		face.hydrate(bs)
+
+		if ".SHP" in rapi.getInputName():
+			if "26.SHP" in rapi.getInputName():
+				face.BrainStorm(bs, vertices)
+			elif "B1.SHP" in rapi.getInputName():
+				face.BrainStorm(bs, vertices)
+
+			if numGroups > 1:
+				face.hydrate(bs)
+			else:
+				if i < (numTri):
+					face.OpTri(bs)
+				elif i < numTri + numQuad:
+					face.OpQuad(bs)
+				else:
+					face.hydrate(bs)
+		else:
+			face.hydrate(bs)
+
+		#print(repr(face))
 		if face.type == 0x2C: # if quad
 			if face.side == 8: # double
 				faces.append(VSFace(0x24, face.size, face.side, face.alpha, 3, [face.vertices[2], face.vertices[1], face.vertices[0]], [face.uv[2], face.uv[1], face.uv[0]]))
@@ -245,65 +287,84 @@ def VSTexturesSection(bs, isWep, drawTex = True):
 	textures = []
 	palletColors = []
 	texMapSize, unk, halfW, halfH, numColor = bs.read('I4B')
+	#print("texMapSize : "+str(texMapSize)+" 	unk : "+str(unk)+" 	halfW : "+str(halfW)+" 	halfH : "+str(halfH)+" 	numColor : "+str(numColor))
 	numPallets = 7 if isWep == True else 2 #.WEP 7 pallets
-	if isWep == True:
-		handleColors = []
-		for j in range(0, int(numColor/3)):
-			colorData = bs.readBits(16)
-			handleColors.append(colorData)
-		for i in range(0, numPallets):
-			colors = []
-			colors = colors+handleColors
-			for j in range(0, int(numColor/3*2)):
+	if numColor > 0:
+		if isWep == True:
+			handleColors = []
+			for j in range(0, int(numColor/3)):
 				colorData = bs.readBits(16)
-				colors.append(colorData)
-			textures.append(NoeTexture("tex_"+str(i), halfW*2, halfH*2, None))
-			palletColors.append(colors)
-	else:
+				handleColors.append(colorData)
+			for i in range(0, numPallets):
+				colors = []
+				colors += handleColors
+				for j in range(0, int(numColor/3*2)):
+					colorData = bs.readBits(16)
+					colors.append(colorData)
+				textures.append(NoeTexture("tex_"+str(i), halfW*2, halfH*2, None))
+				palletColors.append(colors)
+		else:
+			for i in range(0, numPallets):
+				colors = []
+				for j in range(0, numColor):
+					colorData = bs.readBits(16)
+					colors.append(colorData)
+				textures.append(NoeTexture("tex_"+str(i), halfW*2, halfH*2, None))
+				palletColors.append(colors)
+
+		cluts = []
+		for x in range(0, halfW*2):
+			for y in range(0, halfH*2):
+				clut = bs.read('B')[0] #CLUT colour reference
+				cluts.append(clut)
+
 		for i in range(0, numPallets):
-			colors = []
-			for j in range(0, numColor):
-				colorData = bs.readBits(16)
-				colors.append(colorData)
-			textures.append(NoeTexture("tex_"+str(i), halfW*2, halfH*2, None))
-			palletColors.append(colors)
-	
-	cluts = []
-	for x in range(0, halfW*2):
-		for y in range(0, halfH*2):
-			clut = bs.read('B')[0] #CLUT colour reference
-			cluts.append(clut)
-	for i in range(0, numPallets):
-		pixmap = []
-		for j in range(0, len(cluts)):
-			pixmap = pixmap + color16to32(palletColors[i][int(cluts[j])])
-		textures[i].pixelData = bytearray(pixmap)
-		if drawTex:
-			texName = rapi.getInputName()+"_pal_"+str(i)+".png"
-			if (rapi.checkFileExists(texName) == False):
-				noesis.saveImageRGBA(texName, textures[i])
+			pixmap = bytearray()
+			for j in range(0, len(cluts)):
+				if int(cluts[j]) < numColor:
+					pixmap += bytearray(color16to32(palletColors[i][int(cluts[j])]))
+				else:
+					pixmap += bytearray(color16to32(palletColors[i][0]))
+			textures[i].pixelData = pixmap
+			if drawTex:
+				texName = rapi.getInputName()+"_pal_"+str(i)+".png"
+				if (rapi.checkFileExists(texName) == False):
+					noesis.saveImageRGBA(texName, textures[i])
 
 	return textures
 
 def VSBuildModel(bones, groups, vertices, faces, textures, materials):
 	meshes = []
-	halfW = textures[0].width/2
-	halfH = textures[0].height/2
-	material = materials[0]
+	hasTex = True
+	if len(textures) > 0:
+		halfW = textures[0].width/2
+		halfH = textures[0].height/2
+		material = materials[0]
+	else:
+		hasTex = False
+
+	if ("26.SHP" in rapi.getInputName() or "B1.SHP" in rapi.getInputName()):
+		hasTex = False
+
 	for i in range (0, len(bones)):
 		idxList = []
 		posList = []
 		uvList = []
 		for x in range(0, len(faces)):
-			if (True if i == vertices[faces[x].vertices[0]].bone.index else False):
-				for y in range(0, 3):
-					idxList.append(len(posList))
-					posList.append(vertices[faces[x].vertices[y]].position)
-					uvList.append(NoeVec3([faces[x].uv[y][0]/halfW/2, faces[x].uv[y][1]/halfH/2, 0]))
+			if len(faces[x].vertices) == 3 and int(faces[x].vertices[0]) < len(vertices):
+				if (True if i == vertices[faces[x].vertices[0]].bone.index else False):
+					for y in range(0, 3):
+						idxList.append(len(posList))
+						posList.append(vertices[faces[x].vertices[y]].position)
+						if hasTex == True:
+							uvList.append(NoeVec3([faces[x].uv[y][0]/halfW/2, faces[x].uv[y][1]/halfH/2, 0]))
 
 		if len(posList)/3 >= 1:
-			mesh = NoeMesh(idxList, posList, "mesh_"+str(i), material.name)
-			mesh.uvs = uvList
+			if hasTex == True:
+				mesh = NoeMesh(idxList, posList, "mesh_"+str(i), material.name)
+				mesh.uvs = uvList
+			else :
+				mesh = NoeMesh(idxList, posList, "mesh_"+str(i))
 			meshes.append(mesh)
 	return meshes
 
@@ -328,7 +389,7 @@ class VSBone:
 		self.baseOffset = NoeVec3(bs.read('3b'))
 		self.offset = NoeVec3([self.baseOffset[0], self.baseOffset[1], self.baseOffset[2]])
 		#print("Bone id : "+str(index)+" -> parent : "+str(self.parentIndex))
-		if (self.parentIndex != -1 & int(self.parentIndex) < len(bones)):
+		if (self.parentIndex != -1 and int(self.parentIndex) < len(bones)):
 			self.parent = bones[int(self.parentIndex)]
 			self.parentName = "bone_"+str(self.parentIndex)
 			self.offset = self.offset + self.parent.offset
@@ -353,6 +414,9 @@ class VSGroup:
 		self.boneIndex, self.numVertices = bs.read('hH')
 		if self.boneIndex != -1:
 			self.bone = bones[self.boneIndex]
+		#print(self)
+	def __repr__(self):
+		return "(VSGroup #" + str(self.boneIndex) + " v: " + str(self.numVertices) + ")"
 
 class VSVertex:
 	def __init__(self):
@@ -366,8 +430,9 @@ class VSVertex:
 		self.bone = bone
 		self.position = NoeVec3(bs.read('3h'))
 		bs.seek(0x2, NOESEEK_REL)
+		#print(self)
 	def __repr__(self):
-		return "(VSVertex :" + str(self.idx) + "," + str(self.bone) + "," + repr(self.position) + ")"
+		return "(VSVertex :" + str(self.idx) + "," + str(self.bone.index) + "," + repr(self.position) + ")"
 
 class VSFace:
 	def __init__(self, _type = 0, size = 0, side = 0, alpha = 0, verticesCount = 3, vertices = [], uv = []):
@@ -387,7 +452,8 @@ class VSFace:
 		self.vertices = []
 		self.uv = []
 	def hydrate(self, bs):
-		self.type, self.size, self.side, self.alpha = bs.read('4b')
+		self.type, self.size, self.side, self.alpha = bs.read('4B')
+		# self.side = [0, 4, 7, 8, 11]
 		if self.type == 0x24:
 			self.verticesCount = 3
 		elif self.type == 0x2C:
@@ -397,8 +463,59 @@ class VSFace:
 			self.vertices.append(idx)
 		for i in range(0, self.verticesCount):
 			self.uv.append(bs.read('2B'))
+		#print(self)
+	def BrainStorm(self, bs, vmax):
+		vIdx = bs.read('4H')
+		if ((vIdx[0]/4 < vmax) and (vIdx[1]/4 < vmax) and (vIdx[2]/4 < vmax) and (vIdx[3]/4 < vmax)): # good chance it's a quad
+			self.type = 0x2C
+			self.verticesCount = 4
+			for i in range(0, self.verticesCount):
+				idx = int(vIdx[i]/4)
+				self.vertices.append(idx)
+				self.uv.append([0,0])
+			for i in range(0, 4):
+				nums = bs.read("4B")
+
+		else:
+			if ((vIdx[0]/4 < vmax) and (vIdx[1]/4 < vmax) and (vIdx[2]/4 < vmax)):
+				self.type = 0x24
+				self.verticesCount = 3
+				for i in range(0, self.verticesCount):
+					idx = int(vIdx[i]/4)
+					self.vertices.append(idx)
+					self.uv.append([0,0])
+				for i in range(0, 4):
+					nums = bs.read("4B")
+			else:
+				self.type = 0x0
+				###
+
+
+
+	def OpTri(self, bs):
+		self.type = 0x24
+		self.verticesCount = 3
+		for i in range(0, self.verticesCount):
+			idx = int(bs.read('H')[0]/4)
+			self.vertices.append(idx)
+		for i in range(0, self.verticesCount):
+			self.uv.append(bs.read('2B'))
+		for i in range(0, self.verticesCount):
+			nums = bs.read('I')
+
+	def OpQuad(self, bs):
+		self.type = 0x2C
+		self.verticesCount = 4
+		for i in range(0, self.verticesCount):
+			idx = int(bs.read('H')[0]/4)
+			self.vertices.append(idx)
+		for i in range(0, self.verticesCount):
+			self.uv.append(bs.read('2B'))
+		for i in range(0, self.verticesCount):
+			nums = bs.read('I')
+		
 	def __repr__(self):
-		return "(VSFace :" + repr(self.vertices) + ")"
+		return "(VSFace :" +repr(self.type)+"	size:"+ repr(self.size)+"	side:"+ repr(self.side)+"	v:"+ repr(self.vertices) + ")"
 
 def VS_Anim(bs, index, numBones):
 	idx = index;
@@ -437,9 +554,10 @@ class Anim:
 	def getData(self, bs, basePtr, dataPtr, animations):
 		localPtr = self.ptrTranslation+basePtr+dataPtr
 		bs.setOffset(localPtr)
-		x = bs.read('h')[0] # BIG_ENDIAN
-		y = bs.read('h')[0] # BIG_ENDIAN
-		z = bs.read('h')[0] # BIG_ENDIAN
+		x = bs.read('>h')[0] # BIG_ENDIAN
+		y = bs.read('>h')[0] # BIG_ENDIAN
+		z = bs.read('>h')[0] # BIG_ENDIAN
+		#print("x : "+str(x)+" 	y : "+str(y)+" 	z : "+str(z))
 		
 		if self.idOtherAnimation != -1:
 			self = animations[ self.idOtherAnimation ]
@@ -450,9 +568,10 @@ class Anim:
 			bs.setOffset(localPtr2)
 			# readPose
 			# big endian! but... WHY?!
-			rx = bs.read('h')[0] # BIG_ENDIAN
-			ry = bs.read('h')[0] # BIG_ENDIAN
-			rz = bs.read('h')[0] # BIG_ENDIAN
+			rx = bs.read('>h')[0] # BIG_ENDIAN
+			ry = bs.read('>h')[0] # BIG_ENDIAN
+			rz = bs.read('>h')[0] # BIG_ENDIAN
+			#print("rx : "+str(rx)+" 	ry : "+str(ry)+" 	rz : "+str(rz))
 			self.pose.append([ rx, ry, rz ])
 			# readKeyframes
 			f = 0;
@@ -477,7 +596,7 @@ class Anim:
 		z = 0
 		f = 0
 		
-		if ( op & 0xe0 ) > 0 :
+		if ( op and 0xe0 ) > 0 :
 			f = op & 0x1f;
 			if f == 0x1f :
 				f = 0x20 + bs.read('B')[0]
@@ -493,33 +612,33 @@ class Anim:
 			op = op << 3
 			h = bs.read('h')[0] # BIG_ENDIAN
 			
-			if ( h & 0x4 ) > 0 :
+			if ( h and 0x4 ) > 0 :
 				x = h >> 3;
 				op = op & 0x60
 				
-				if ( h & 0x2 ) > 0 :
+				if ( h and 0x2 ) > 0 :
 					y = bs.read('h')[0] # BIG_ENDIAN
 					op = op & 0xa0
 
-				if ( h & 0x1 ) > 0 :
+				if ( h and 0x1 ) > 0 :
 					z = bs.read('h')[0] # BIG_ENDIAN
 					op = op & 0xc0
-			elif ( h & 0x2 ) > 0 :
+			elif ( h and 0x2 ) > 0 :
 				y = h >> 3
 				op = op & 0xa0
-				if ( h & 0x1 ) > 0 :
+				if ( h and 0x1 ) > 0 :
 					z = bs.read('h')[0] # BIG_ENDIAN
 					op = op & 0xc0
-			elif ( h & 0x1 ) > 0 :
+			elif ( h and 0x1 ) > 0 :
 				z = h >> 3
 				op = op & 0xc0
 				
 		# byte values (fallthrough)
-		if ( op & 0x80 ) > 0 :
+		if ( op and 0x80 ) > 0 :
 			x = bs.read('b')[0]
-		if ( op & 0x40 ) > 0 :
+		if ( op and 0x40 ) > 0 :
 			y = bs.read('b')[0]
-		if ( op & 0x20 ) > 0 :
+		if ( op and 0x20 ) > 0 :
 			z = bs.read('b')[0]
 		
 		return [ x, y, z, f ];
@@ -534,7 +653,7 @@ class Anim:
 		animFrameMats = []
 		hierarchy = []
 
-		for i in range(0, len(self.keyframes)):
+		for i in range(0, animNumFrames):
 			frames = self.keyframes[i]
 			pose = self.pose[i]
 			rx = pose[0]*2
@@ -561,7 +680,7 @@ class Anim:
 
 				angles = NoeAngles((rx, ry, rz))
 				quat = angles.toQuat()
-				keys.append(quat.toMat43(int(t))) # timescale
+				keys.append(quat.toMat43(int(t*0.04))) # timescale
 			
 			hierarchy = hierarchy + keys
 		hierarchy = hierarchy + [NoeMat43()] # root's translation bone
