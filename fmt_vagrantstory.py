@@ -43,7 +43,6 @@ def registerNoesisTypes():
 	handle = noesis.register("Vagrant Story .TIM", ".TIM")
 	noesis.setHandlerTypeCheck(handle, VSTIMCheck)
 	noesis.setHandlerLoadRGBA(handle, VSLoadTIM)
-
 	noesis.logPopup()
 	return 1
 
@@ -59,26 +58,20 @@ def VSTIMCheck(data):
 	if bs.read(">B")[0] != 0x10:
 		return 0
 	return 1
-
 def VSWEPParser(bs):
 	h = bs.read("4s")[0]
 	if h != VS_HEADER:
 		return None
 	numBones, numGroups, numTri, numQuad, numFace = bs.read("2B3H")
-
 	numPoly = numTri+numQuad+numFace
 	#print("numBones : "+str(numBones)+" 	numGroups : "+str(numGroups)+" 	numTri : "+str(numTri)+" 	numQuad : "+str(numQuad)+" 	numFace : "+str(numFace))
-
 	dec = bs.getOffset()+4
-
 	texturePtr1 = bs.read('I')[0]+dec #pointer to texture - $10
 	bs.seek(0x30, NOESEEK_REL) # Unknown (always zero)
 	texturePtr = int(bs.read('I')[0])+dec #relative pointer to texture section - $10
 	groupPtr = bs.read('I')[0]+dec
 	vertexPtr = bs.read('I')[0]+dec
 	polygonPtr = bs.read('I')[0]+dec
-
-	
 	VSbones = VSBoneSection(bs, numBones)
 	bones = []
 	for i in range(0, len(VSbones)):
@@ -92,8 +85,6 @@ def VSWEPParser(bs):
 	if polygonPtr != bs.getOffset():
 		bs.setOffset(polygonPtr)
 	faces = VSFacesSection(bs, numPoly, numGroups, numTri, numQuad, len(vertices))
-
-
 	if texturePtr != bs.getOffset():
 		bs.setOffset(texturePtr)
 	textures = VSTexturesSection(bs, True, True)
@@ -102,7 +93,6 @@ def VSWEPParser(bs):
 		mat = NoeMaterial("mat_"+str(i), textures[i].name)
 		materials.append(mat)
 	meshes = VSBuildModel(bones, groups, vertices, faces, textures, materials)
-
 	anims = []
 	NMM = NoeModelMaterials(textures, materials)
 	mdl = NoeModel(meshes, bones, anims, NMM)
@@ -118,13 +108,9 @@ def VSSHPParser(bs):
 		return None
 	numBones, numGroups, numTri, numQuad, numFace = bs.read("2B3H")
 	numPoly = numTri+numQuad+numFace
-
-	#print("numBones : "+str(numBones)+" 	numGroups : "+str(numGroups)+" 	numTri : "+str(numTri)+" 	numQuad : "+str(numQuad)+" 	numFace : "+str(numFace))
-
 	overlays = []
 	for i in range(0, 8):
 		overlays.append(bs.read('4b'))
-	
 	bs.seek(0x24, NOESEEK_REL) # Unknown
 	bs.seek(0x6, NOESEEK_REL) # collision size and height (shape is a cylinder)
 	bs.seek(0x2, NOESEEK_REL) # menu position Y
@@ -137,55 +123,40 @@ def VSSHPParser(bs):
 	bs.seek(0x2, NOESEEK_REL) # Unknown
 	bs.seek(0x2, NOESEEK_REL) # Target sphere position Y
 	bs.seek(0x8, NOESEEK_REL) # Unknown
-	
 	for i in range(0, 0xC):
 		bs.seek(0x4, NOESEEK_REL) # LBA XX_BTX.SEQ  (battle animations first one is actually XX_COM.SEQ)
-	
 	for i in range(0, 0xC):
 		bs.seek(0x2, NOESEEK_REL) # chain attack animation ID
-	
 	for i in range(0, 4):
-		bs.seek(0x4, NOESEEK_REL) # LBA XXSP0X.SEQ (special attack animations)
-		
+		bs.seek(0x4, NOESEEK_REL) # LBA XXSP0X.SEQ (special attack animations)	
 	bs.seek(0x20, NOESEEK_REL) # unknown (probably more LBA tables, there are also special attack ids stored here.)
-
 	dec = bs.getOffset()+4
 	magicPtr = bs.read('I')[0] + dec # pointer to magic effects section (relative to offset $F8)
-	
 	for i in range(0, 0x18):
 		bs.seek(0x2, NOESEEK_REL) # unknown (noticeable effects when casting spell
-
 	AKAOPtr = bs.read('I')[0] + dec # relative pointer to AKAO section (relative to offset $F8)
 	groupPtr = bs.read('I')[0] + dec # relative pointer to groups section (relative to offset $F8)
 	vertexPtr = bs.read('I')[0] + dec # relative pointer to vertex section (relative to offset $F8)
 	polygonPtr = bs.read('I')[0] + dec # relative pointer to polygon section (relative to offset $F8)
-
 	VSbones = VSBoneSection(bs, numBones)
 	bones = []
 	for i in range(0, len(VSbones)):
 		bones.append(VSbones[i].toNoeBone())
 	groups = VSGroupSection(bs, numGroups, VSbones)
-
 	if vertexPtr != bs.getOffset():
 		bs.setOffset(vertexPtr)
-	
 	vertices = VSVertexSection(bs, groups, VSbones)
 	faces = VSFacesSection(bs, numPoly, numGroups, numTri, numQuad, len(vertices))
-
 	bs.seek(magicPtr-AKAOPtr, NOESEEK_REL)
 	num = int(bs.read('I')[0])
 	magicNum = int(bs.read('I')[0])
 	if magicNum + bs.getOffset() < bs.getSize():
-		bs.seek(magicNum, NOESEEK_REL)
-
-	
+		bs.seek(magicNum, NOESEEK_REL)	
 	textures = VSTexturesSection(bs, False, True)
 	materials = []
 	for i in range(0, len(textures)):
 		materials.append(NoeMaterial("mat_"+str(i), textures[i].name))
-
 	meshes = VSBuildModel(bones, groups, vertices, faces, textures, materials)
-
 	anims = []
 	NMM = NoeModelMaterials(textures, materials)
 	mdl = NoeModel(meshes, bones, anims, NMM)
@@ -201,21 +172,18 @@ def VSLoadSequence(data, mdlList):
 	numSlots, numBones, size, h3 = bs.read('2H2I')
 	slotPtr = int(bs.read('I')[0] + 8)
 	dataPtr = slotPtr+numSlots
-		
 	numAnimations = int((dataPtr - numSlots - 16) / ( numBones * 4 + 10 ))
 	animations = []
 	for i in range(0, numAnimations):
 		a = VSAnim()
 		a.hydrate(bs, i, numBones)
 		animations.append(a)
-	
 	slots = []
 	for i in range(0, numSlots):
 		slots.append(bs.read('b')[0])
-	
+	#print("slots : "+repr(slots))
 	for i in range(0, numAnimations):
 		animations[i].getData(bs, basePtr, dataPtr, animations)
-	
 	seqPath = rapi.getExtensionlessName(rapi.getInputName())
 	modelPath = str(seqPath).split('_')[0]+".SHP"
 	if rapi.checkFileExists(modelPath):
@@ -225,7 +193,6 @@ def VSLoadSequence(data, mdlList):
 	noeAnims = []
 	for i in range(0, numAnimations):
 		noeAnims.append(animations[i].build(model))
-
 	model.setAnims(noeAnims)
 	return 1
 def VSLoadARM(data, mdlList):
@@ -257,7 +224,6 @@ def VSLoadARM(data, mdlList):
 	mdlList.append(mdl)
 
 	return 1
-
 def VSLoadZND(data, texList):
 	p = ZNDParser(data)
 	textures = p.parse()
@@ -336,7 +302,6 @@ class ZNDParser():
 			return material
 		else:
 			textureTIM = self.getTIM( textureId )
-			#this.frameBuffer.markCLUT( clutId )
 			x = ( clutId * 16 ) % 1024
 			y = math.floor( ( clutId * 16 ) / 1024 )
 			clut = None
@@ -354,9 +319,6 @@ class ZNDParser():
 			textures.append(texture)
 			materials.append(material)
 			return material
-
-
-
 def VSLoadMPD(data, mdlList):
 	bs = NoeBitStream(data)
 	# Header section
@@ -528,8 +490,6 @@ def VSLoadTIM(data, texList):
 	texture.pixelData = pixmap
 	texList.append(texture)
 	return 1
-
-
 def VSBoneSection(bs, numBones):
 	#print("VSBoneSection #"+str(bs.getOffset()))
 	bones = []
@@ -671,20 +631,25 @@ def VSBuildModel(bones, groups, vertices, faces, textures, materials):
 		idxList = []
 		posList = []
 		uvList = []
+		wList = []
 		for x in range(0, len(faces)):
 			if len(faces[x].vertices) == 3 and int(faces[x].vertices[0]) < len(vertices):
 				if (i == vertices[faces[x].vertices[0]].bone.index):
 					for y in range(0, 3):
 						if faces[x].vertices[y] < len(vertices):
 							idxList.append(len(posList))
-							posList.append(vertices[faces[x].vertices[y]].position)
+							posList.append(vertices[faces[x].vertices[y]].position + vertices[faces[x].vertices[y]].bone.offset)
 							if hasTex == True:
 								uvList.append(NoeVec3([faces[x].uv[y][0]/halfW/2, faces[x].uv[y][1]/halfH/2, 0]))
+							indices = [vertices[faces[x].vertices[y]].bone.index]
+							weights = [0.95]
+							wList.append(NoeVertWeight(indices, weights))
 
 		if len(posList)/3 >= 1:
 			if hasTex == True:
 				mesh = NoeMesh(idxList, posList, "mesh_"+str(i), material.name)
-				mesh.uvs = uvList
+				mesh.setUVs(uvList)
+				mesh.setWeights(wList)
 			else :
 				mesh = NoeMesh(idxList, posList, "mesh_"+str(i))
 			meshes.append(mesh)
@@ -714,7 +679,7 @@ class VSBone:
 		if (self.parentIndex != -1 and int(self.parentIndex) < len(bones)):
 			self.parent = bones[int(self.parentIndex)]
 			self.parentName = "bone_"+str(self.parentIndex)
-			self.offset = self.offset + self.parent.offset
+			#self.offset = self.offset + self.parent.offset
 		# mode
 		# 0 - 2 normal ?
 		# 3 - 6 normal + roll 90 degrees
@@ -1186,7 +1151,7 @@ class VSTIM():
 		self.texture = NoeTexture("tim_"+str(self.idx), self.width*4, self.height, pixmap)
 
 		return self.texture
-class  MPDMesh:
+class MPDMesh:
 	def __init__(self, bs, group, textureId, clutId):
 		self.idx = str(textureId) + '-' + str(clutId)
 		self.group = group
@@ -1210,6 +1175,7 @@ class VSAnim:
 		self.numBones = 0
 		self.pose = []
 		self.keyframes = []
+		self.trans = []
 	def hydrate(self, bs, index, numBones):
 		self.idx = index;
 		self.numBones = numBones;
@@ -1230,10 +1196,9 @@ class VSAnim:
 	def getData(self, bs, basePtr, dataPtr, animations):
 		localPtr = self.ptrTranslation+basePtr+dataPtr
 		bs.setOffset(localPtr)
-		x = bs.read('>h')[0] # BIG_ENDIAN
-		y = bs.read('>h')[0] # BIG_ENDIAN
-		z = bs.read('>h')[0] # BIG_ENDIAN
+		x, y, z = bs.read('>3h')# BIG_ENDIAN
 		#print("x : "+str(x)+" 	y : "+str(y)+" 	z : "+str(z))
+		self.trans.append(NoeVec3([x, y, z]))
 		
 		if self.idOtherAnimation != -1:
 			self = animations[ self.idOtherAnimation ]
@@ -1242,16 +1207,11 @@ class VSAnim:
 			self.keyframes.append( [ [ 0, 0, 0, 0 ] ] )
 			localPtr2 = self.ptrBones[i]+basePtr+dataPtr
 			bs.setOffset(localPtr2)
-			# readPose
-			# big endian! but... WHY?!
-			rx = bs.read('>h')[0] # BIG_ENDIAN
-			ry = bs.read('>h')[0] # BIG_ENDIAN
-			rz = bs.read('>h')[0] # BIG_ENDIAN
+			rx, ry, rz = bs.read('>3h')# BIG_ENDIAN
 			#print("rx : "+str(rx)+" 	ry : "+str(ry)+" 	rz : "+str(rz))
 			self.pose.append([ rx, ry, rz ])
 			# readKeyframes
 			f = 0;
-
 			while True:
 				op = self.readOpcode(bs)
 				if ( op == None ):
@@ -1260,55 +1220,51 @@ class VSAnim:
 				self.keyframes[ i ].append( op )
 				if ( f >= self.length - 1 ):
 					break
-	
 	def readOpcode(self, bs):
 		op = bs.read('B')[0]
-		op0 = op;
+		op0 = op
 		if ( op == 0 ):
 			return None
-		
 		x = 0
 		y = 0
 		z = 0
 		f = 0
-		
 		if ( op and 0xe0 ) > 0 :
-			f = op & 0x1f;
+			f = op & 0x1f
 			if f == 0x1f :
 				f = 0x20 + bs.read('B')[0]
 			else:
 				f = 1+f
 		else:
-			f = op & 0x3;
+			f = op & 0x3
 			if f == 0x3 :
 				f = 4 + bs.read('B')[0]
 			else:
 				f = 1+f
 			
 			op = op << 3
-			h = bs.read('h')[0] # BIG_ENDIAN
+			h = bs.read('>h')[0] # BIG_ENDIAN
 			
 			if ( h and 0x4 ) > 0 :
-				x = h >> 3;
+				x = h >> 3
 				op = op & 0x60
 				
 				if ( h and 0x2 ) > 0 :
-					y = bs.read('h')[0] # BIG_ENDIAN
+					y = bs.read('>h')[0] # BIG_ENDIAN
 					op = op & 0xa0
 
 				if ( h and 0x1 ) > 0 :
-					z = bs.read('h')[0] # BIG_ENDIAN
+					z = bs.read('>h')[0] # BIG_ENDIAN
 					op = op & 0xc0
 			elif ( h and 0x2 ) > 0 :
 				y = h >> 3
 				op = op & 0xa0
 				if ( h and 0x1 ) > 0 :
-					z = bs.read('h')[0] # BIG_ENDIAN
+					z = bs.read('>h')[0] # BIG_ENDIAN
 					op = op & 0xc0
 			elif ( h and 0x1 ) > 0 :
 				z = h >> 3
 				op = op & 0xc0
-				
 		# byte values (fallthrough)
 		if ( op and 0x80 ) > 0 :
 			x = bs.read('b')[0]
@@ -1316,72 +1272,85 @@ class VSAnim:
 			y = bs.read('b')[0]
 		if ( op and 0x20 ) > 0 :
 			z = bs.read('b')[0]
-		
-		return [ x, y, z, f ];
+		return [ x, y, z, f ]
 	def build(self, model):
 		animName = "anim_"+str(self.idx)
 		numAnimBones = self.numBones
 		animBones = model.bones
-		animNumFrames = len(self.keyframes)
+		animNumFrames = 0
 		animFrameRate = 24
 		numFrameMats = len(self.pose)
-
+		animFrameMats = []
 		kfBones = []
 		for i in range(0, numAnimBones):
-			if len(self.keyframes) > i:
-				frames = self.keyframes[i]
+			if i < len(self.keyframes):
+				keyframes = self.keyframes[i]
 				pose = self.pose[i]
-				rx = pose[0]*2
-				ry = pose[1]*2
-				rz = pose[2]*2
-
+				_rx = pose[0]*2
+				_ry = pose[1]*2
+				_rz = pose[2]*2
 				keys = []
 				t = 0
-				for j in range(0, len(frames)):
-					frame = frames[j]
-					f = frame[3]
-					t = t+f
-					if frame[0] == None:
-						frame[0] = frames[j-1][0]
-					if frame[1] == None:
-						frame[1] = frames[j-1][1]
-					if frame[2] == None:
-						frame[2] = frames[j-1][2]
+				kfl = len(keyframes)
+				matrix = model.bones[i].getMatrix()
+				animNumFrames += kfl
+				kfBone = NoeKeyFramedBone(i)
+				ktrss = []
+				krots = []
+				kscls = []
+				if i > 0:
+					ktrss.append(NoeKeyFramedValue(0.0, NoeVec3((matrix[0][0], 0, 0))))
+				kscls.append(NoeKeyFramedValue(0.0, 1.0))
+				for j in range(0, kfl):
+					keyframe = keyframes[ j ]
+					f = keyframe[ 3 ]
+					t += f
+					if keyframe[0] == None:
+						keyframe[0] = keyframes[j-1][0]
+					if keyframe[1] == None:
+						keyframe[1] = keyframes[j-1][1]
+					if keyframe[2] == None:
+						keyframe[2] = keyframes[j-1][2]
+					rx = rot13toRad(_rx + keyframe[0]*f)
+					ry = rot13toRad(_ry + keyframe[1]*f)
+					rz = rot13toRad(_rz + keyframe[2]*f)
+					q = NoeQuat()
+					qu = quatFromAxisAnle( NoeVec3( (1, 0, 0) ), rx )
+					qv = quatFromAxisAnle( NoeVec3( (0, 1, 0) ), ry )
+					qw = quatFromAxisAnle( NoeVec3( (0, 0, 1) ), rz )
+					q = qw * qv * qu
 
-					rx = rot13toRad(rx + frame[0]*f)
-					ry = rot13toRad(ry + frame[1]*f)
-					ry = rot13toRad(ry + frame[2]*f)
 
-					kfBone = NoeKeyFramedBone(i)
-					quat = NoeKeyFramedValue(t, NoeAngles((rx, ry, rz)).toMat43_XYZ().toQuat())
-					kfBone.setRotation(quat)
-					kfBones.append(kfBone)
+					angles = NoeAngles((rx, ry, rz)).toDegrees().toQuat()
 
-				#noeBoneIndex = noeSafeGet(model.bone
+					time = t*0.04
+					krots.append(NoeKeyFramedValue(time, q))
 
-		return NoeKeyFramedAnim(animName, animBones, kfBones, 24)
+				kfBone.setTranslation(ktrss, noesis.NOEKF_TRANSLATION_VECTOR_3, noesis.NOEKF_INTERPOLATE_LINEAR)
+				kfBone.setRotation(krots, noesis.NOEKF_ROTATION_QUATERNION_4, noesis.NOEKF_INTERPOLATE_LINEAR)
+				kfBone.setScale(kscls, noesis.NOEKF_SCALE_SCALAR_1, noesis.NOEKF_INTERPOLATE_LINEAR)
+				kfBones.append(kfBone)
 
+		kAnim = NoeKeyFramedAnim(animName, model.bones, kfBones, 24.0)
+		return kAnim
+
+def quatFromAxisAnle(axis, angle):
+	halfAngle = angle / 2
+	s = math.sin( halfAngle )
+	_x = axis[0] * s
+	_y = axis[1] * s
+	_z = axis[2] * s
+	_w = math.cos( halfAngle )
+	return NoeQuat((_x, _y, _z, _w))
 def color16to32( c ):
 	b = ( c & 0x7C00 ) >> 10
 	g = ( c & 0x03E0 ) >> 5
 	r = ( c & 0x001F )
 	if c == 0 :
 		return [ 0, 0, 0, 0 ]
-	
-	#5bit -> 8bit is factor 2^3 = 8
 	return [ r * 8, g * 8, b * 8, 255 ]
-
 def rot13toRad(angle):
 	return angle*(1/4096)*math.pi
-
-
-
-
-
-
-
-
-
 
 
 
