@@ -10,10 +10,11 @@ Some parts of this script (.SEQ & TIM) is simply a python version of a javascrip
 
 - .WEP Weapon Model format is fully supported
 - .SHP reader is fully fonctionnal but need to be linked with .SEQ for bones position
-- .SEQ Animation format : started but... hard
+- .SEQ Animation format : almost done
 - .ARM Mini Map Format is fully supported, but lines are drawn using a weird method
 - .ZUD reader ok
 - .ZND reader ok
 - .MPD Map format is fully supported and linked with .ZND for Textures (Thanks to VSTool)
 
 <img src="https://github.com/korobetski/Vagrant-Story-Noesis-Python-Plugin/raw/master/The_Rene_Coastroad.jpg"/>
+<img src="https://github.com/korobetski/Vagrant-Story-Noesis-Python-Plugin/raw/master/ashley.jpg"/>
