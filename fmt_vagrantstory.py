@@ -173,26 +173,39 @@ def VSLoadSequence(data, mdlList):
 	slotPtr = int(bs.read('I')[0] + 8)
 	dataPtr = slotPtr+numSlots
 	numAnimations = int((dataPtr - numSlots - 16) / ( numBones * 4 + 10 ))
+
 	animations = []
 	for i in range(0, numAnimations):
 		a = VSAnim()
 		a.hydrate(bs, i, numBones)
 		animations.append(a)
+
 	slots = []
 	for i in range(0, numSlots):
 		slots.append(bs.read('b')[0])
-	#print("slots : "+repr(slots))
+
 	for i in range(0, numAnimations):
 		animations[i].getData(bs, basePtr, dataPtr, animations)
+
 	seqPath = rapi.getExtensionlessName(rapi.getInputName())
 	modelPath = str(seqPath).split('_')[0]+".SHP"
 	if rapi.checkFileExists(modelPath):
 		modelData = rapi.loadIntoByteArray(modelPath)
 		VSLoadModel(modelData, mdlList)
 	model = mdlList[0]
+
 	noeAnims = []
+	boneSizes = []
+	boneModes = []
+	for i in range(0, numBones):
+		matrix = model.bones[i].getMatrix()
+		boneSizes.append(matrix[0][1])
+		boneModes.append(matrix[0][2])
+		matrix[0] = NoeVec3((1, 0.0, 0.0))
+		model.bones[i].setMatrix(matrix)
 	for i in range(0, numAnimations):
-		noeAnims.append(animations[i].build(model))
+		noeAnims.append(animations[i].build(model, boneSizes, boneModes))
+	#noeAnims.append(animations[0].build(model, boneSizes, boneModes))
 	model.setAnims(noeAnims)
 	return 1
 def VSLoadARM(data, mdlList):
@@ -497,6 +510,12 @@ def VSBoneSection(bs, numBones):
 		bone = VSBone()
 		bone.hydrate(bs, i, bones)
 		bones.append(bone)
+	for i in range(0, numBones):
+		Tbone = bones[i].createTransBone(numBones+i)
+		bones.append(Tbone)
+	for i in range(0, numBones):
+		if bones[i].parentIndex != -1:
+			bones[i].linkToParent(bones[i].parentIndex+numBones, bones)
 	return bones
 def VSGroupSection(bs, numGroups, bones):
 	#print("VSGroupSection #"+str(bs.getOffset()))
@@ -627,22 +646,24 @@ def VSBuildModel(bones, groups, vertices, faces, textures, materials):
 	if ("26.SHP" in rapi.getInputName() or "B1.SHP" in rapi.getInputName()):
 		hasTex = False
 
-	for i in range (0, len(bones)):
+	lb = len(bones)
+	for i in range (0, lb):
 		idxList = []
 		posList = []
 		uvList = []
 		wList = []
-		for x in range(0, len(faces)):
+		lf = len(faces)
+		for x in range(0, lf):
 			if len(faces[x].vertices) == 3 and int(faces[x].vertices[0]) < len(vertices):
 				if (i == vertices[faces[x].vertices[0]].bone.index):
 					for y in range(0, 3):
 						if faces[x].vertices[y] < len(vertices):
 							idxList.append(len(posList))
-							posList.append(vertices[faces[x].vertices[y]].position + vertices[faces[x].vertices[y]].bone.offset)
+							posList.append(vertices[faces[x].vertices[y]].position)
 							if hasTex == True:
 								uvList.append(NoeVec3([faces[x].uv[y][0]/halfW/2, faces[x].uv[y][1]/halfH/2, 0]))
-							indices = [vertices[faces[x].vertices[y]].bone.index]
-							weights = [0.95]
+							indices = [vertices[faces[x].vertices[y]].bone.index+int(lb/2)]
+							weights = [1]
 							wList.append(NoeVertWeight(indices, weights))
 
 		if len(posList)/3 >= 1:
@@ -663,7 +684,6 @@ class VSBone:
 		self.parent = None
 		self.parentIndex = -1
 		self.parentName = None
-		self.baseOffset = NoeVec3()
 		self.offset = NoeVec3()
 		self.mode = 0
 		self.matrix = NoeMat43()
@@ -672,21 +692,41 @@ class VSBone:
 		self.name = "bone_"+str(index)
 		self.length = -int(bs.read('h')[0])
 		bs.seek(0x2, NOESEEK_REL)
-		self.parentIndex = bs.read('B')[0]
-		self.baseOffset = NoeVec3(bs.read('3b'))
-		self.offset = NoeVec3([self.baseOffset[0], self.baseOffset[1], self.baseOffset[2]])
+		self.parentIndex = bs.read('b')[0]
+		self.offset = NoeVec3(bs.read('3b'))
 		#print("Bone id : "+str(index)+" -> parent : "+str(self.parentIndex))
-		if (self.parentIndex != -1 and int(self.parentIndex) < len(bones)):
-			self.parent = bones[int(self.parentIndex)]
-			self.parentName = "bone_"+str(self.parentIndex)
-			#self.offset = self.offset + self.parent.offset
+		self.linkToParent(int(self.parentIndex), bones)
 		# mode
 		# 0 - 2 normal ?
 		# 3 - 6 normal + roll 90 degrees
 		# 7 - 255 absolute, different angles
-		self.mode = bs.read('B')[0]
-		self.matrix = NoeMat43([NoeVec3((self.length, 0.0, 0.0)), NoeVec3((0.0, 1.0, 0.0)), NoeVec3((0.0, 0.0, 1.0)), self.offset])
-		bs.seek(0x7, NOESEEK_REL)
+		self.mode = bs.read('b')[0]
+		unk = bs.read('b')[0]
+
+		self.matrix = NoeMat43([NoeVec3((1, self.length, self.mode)), NoeVec3((0.0, 1, 0.0)), NoeVec3((0.0, 0.0, 1)), NoeVec3((0.0, 0.0, 0.0))])
+		bs.seek(0x6, NOESEEK_REL)
+	def createTransBone(self, idx):
+		Tbone = VSBone()
+		Tbone.index = idx
+		Tbone.name = "bone_"+str(idx)
+		Tbone.length = self.length
+		Tbone.parent = self
+		Tbone.parentIndex = self.index
+		Tbone.parentName = str(self.name)
+		Tbone.offset = self.offset
+		Tbone.mode = self.mode
+		Tbone.matrix = NoeMat43([NoeVec3((1, 0, 0)), NoeVec3((0.0, 1.0, 0.0)), NoeVec3((0.0, 0.0, 1.0)), NoeVec3((Tbone.length,0,0))])
+		return Tbone
+	def linkToParent(self, parentId, bones):
+		bl = len(bones)
+		for i in range(0, bl):
+			if bones[i].index == parentId:
+				self.parent = bones[i]
+				self.parentName = bones[i].name
+				#self.offset = self.offset + self.parent.offset
+				return self.parent
+		self.parentIndex = -1
+		return None
 	def toNoeBone(self):
 		return NoeBone(self.index, self.name, self.matrix, self.parentName, self.parentIndex)
 	def __repr__(self):
@@ -1176,6 +1216,7 @@ class VSAnim:
 		self.pose = []
 		self.keyframes = []
 		self.trans = []
+		self.base = None
 	def hydrate(self, bs, index, numBones):
 		self.idx = index;
 		self.numBones = numBones;
@@ -1193,26 +1234,33 @@ class VSAnim:
 			
 		for i in range(0, self.numBones):
 			bs.seek(0x2, NOESEEK_REL)
+
+	#def ptrData( self, i ):
+	#	return i + this.dataPtr + this.basePtr;
+
 	def getData(self, bs, basePtr, dataPtr, animations):
 		localPtr = self.ptrTranslation+basePtr+dataPtr
 		bs.setOffset(localPtr)
 		x, y, z = bs.read('>3h')# BIG_ENDIAN
-		#print("x : "+str(x)+" 	y : "+str(y)+" 	z : "+str(z))
 		self.trans.append(NoeVec3([x, y, z]))
-		
-		if self.idOtherAnimation != -1:
-			self = animations[ self.idOtherAnimation ]
 
+		self.base = self
+		if self.idOtherAnimation != -1:
+			self.base = animations[ self.idOtherAnimation ]
+
+		self.keyframes = []
 		for i in range(0, self.numBones):
 			self.keyframes.append( [ [ 0, 0, 0, 0 ] ] )
-			localPtr2 = self.ptrBones[i]+basePtr+dataPtr
+			localPtr2 = self.base.ptrBones[i]+basePtr+dataPtr
+
 			bs.setOffset(localPtr2)
 			rx, ry, rz = bs.read('>3h')# BIG_ENDIAN
-			#print("rx : "+str(rx)+" 	ry : "+str(ry)+" 	rz : "+str(rz))
 			self.pose.append([ rx, ry, rz ])
+
 			# readKeyframes
 			f = 0;
 			while True:
+				op = None
 				op = self.readOpcode(bs)
 				if ( op == None ):
 					break
@@ -1220,90 +1268,88 @@ class VSAnim:
 				self.keyframes[ i ].append( op )
 				if ( f >= self.length - 1 ):
 					break
+
+			#print("Keys bone#"+str(i)+" -> "+repr(self.keyframes[i])+" len:"+str(len(self.keyframes[i])))
 	def readOpcode(self, bs):
-		op = bs.read('B')[0]
+		op = int(bs.read('B')[0])
 		op0 = op
 		if ( op == 0 ):
 			return None
-		x = 0
-		y = 0
-		z = 0
-		f = 0
-		if ( op and 0xe0 ) > 0 :
+		x = None
+		y = None
+		z = None
+		f = None
+
+		if ( op & 0xe0 ) > 0 :
+			# number of frames, byte case
 			f = op & 0x1f
 			if f == 0x1f :
-				f = 0x20 + bs.read('B')[0]
+				f = 0x20 + int(bs.read('B')[0])
 			else:
 				f = 1+f
 		else:
+			# number of frames, half word case
 			f = op & 0x3
 			if f == 0x3 :
-				f = 4 + bs.read('B')[0]
+				f = 4 + int(bs.read('B')[0])
 			else:
 				f = 1+f
 			
+			# half word values
 			op = op << 3
-			h = bs.read('>h')[0] # BIG_ENDIAN
+			h = int(bs.read('>h')[0]) # BIG_ENDIAN
 			
-			if ( h and 0x4 ) > 0 :
+			if ( h & 0x4 ) > 0 :
 				x = h >> 3
 				op = op & 0x60
 				
-				if ( h and 0x2 ) > 0 :
-					y = bs.read('>h')[0] # BIG_ENDIAN
+				if ( h & 0x2 ) > 0 :
+					y = int(bs.read('>h')[0]) # BIG_ENDIAN
 					op = op & 0xa0
 
-				if ( h and 0x1 ) > 0 :
-					z = bs.read('>h')[0] # BIG_ENDIAN
+				if ( h & 0x1 ) > 0 :
+					z = int(bs.read('>h')[0]) # BIG_ENDIAN
 					op = op & 0xc0
-			elif ( h and 0x2 ) > 0 :
+			elif ( h & 0x2 ) > 0 :
 				y = h >> 3
 				op = op & 0xa0
-				if ( h and 0x1 ) > 0 :
-					z = bs.read('>h')[0] # BIG_ENDIAN
+				if ( h & 0x1 ) > 0 :
+					z = int(bs.read('>h')[0]) # BIG_ENDIAN
 					op = op & 0xc0
-			elif ( h and 0x1 ) > 0 :
+			elif ( h & 0x1 ) > 0 :
 				z = h >> 3
 				op = op & 0xc0
+
 		# byte values (fallthrough)
-		if ( op and 0x80 ) > 0 :
-			x = bs.read('b')[0]
-		if ( op and 0x40 ) > 0 :
-			y = bs.read('b')[0]
-		if ( op and 0x20 ) > 0 :
-			z = bs.read('b')[0]
+		if ( op & 0x80 ) > 0 :
+			x = int(bs.read('b')[0])
+		if ( op & 0x40 ) > 0 :
+			y = int(bs.read('b')[0])
+		if ( op & 0x20 ) > 0 :
+			z = int(bs.read('b')[0])
+
 		return [ x, y, z, f ]
-	def build(self, model):
-		animName = "anim_"+str(self.idx)
-		numAnimBones = self.numBones
-		animBones = model.bones
-		animNumFrames = 0
-		animFrameRate = 24
-		numFrameMats = len(self.pose)
-		animFrameMats = []
+	def build(self, model, boneSizes, boneModes):
 		kfBones = []
-		for i in range(0, numAnimBones):
+		for i in range(0, self.numBones):
 			if i < len(self.keyframes):
 				keyframes = self.keyframes[i]
+
+				#print("| -- Keys bone#"+str(i)+" -> "+repr(self.keyframes[i])+" len:"+str(len(self.keyframes[i])))
 				pose = self.pose[i]
 				_rx = pose[0]*2
 				_ry = pose[1]*2
 				_rz = pose[2]*2
-				keys = []
+
 				t = 0
-				kfl = len(keyframes)
-				matrix = model.bones[i].getMatrix()
-				animNumFrames += kfl
-				kfBone = NoeKeyFramedBone(i)
+				kfl = len(self.keyframes[i])
+
 				ktrss = []
 				krots = []
 				kscls = []
-				if i > 0:
-					ktrss.append(NoeKeyFramedValue(0.0, NoeVec3((matrix[0][0], 0, 0))))
-				kscls.append(NoeKeyFramedValue(0.0, 1.0))
 				for j in range(0, kfl):
-					keyframe = keyframes[ j ]
-					f = keyframe[ 3 ]
+					keyframe = keyframes[j]
+					f = keyframe[3]
 					t += f
 					if keyframe[0] == None:
 						keyframe[0] = keyframes[j-1][0]
@@ -1311,27 +1357,48 @@ class VSAnim:
 						keyframe[1] = keyframes[j-1][1]
 					if keyframe[2] == None:
 						keyframe[2] = keyframes[j-1][2]
+
 					rx = rot13toRad(_rx + keyframe[0]*f)
 					ry = rot13toRad(_ry + keyframe[1]*f)
 					rz = rot13toRad(_rz + keyframe[2]*f)
+
 					q = NoeQuat()
 					qu = quatFromAxisAnle( NoeVec3( (1, 0, 0) ), rx )
 					qv = quatFromAxisAnle( NoeVec3( (0, 1, 0) ), ry )
 					qw = quatFromAxisAnle( NoeVec3( (0, 0, 1) ), rz )
 					q = qw * qv * qu
 
-
 					angles = NoeAngles((rx, ry, rz)).toDegrees().toQuat()
 
-					time = t*0.04
-					krots.append(NoeKeyFramedValue(time, q))
+					time = t*0.08
+					krots.append(NoeKeyFramedValue(time, NoeQuat((-q[0], -q[1], -q[2], q[3]))))
 
+				kfBone = NoeKeyFramedBone(i)
+				ktrss.append(NoeKeyFramedValue(0.0, NoeVec3((0, 0, 0))))
+				kscls.append(NoeKeyFramedValue(0.0, 1.0))
 				kfBone.setTranslation(ktrss, noesis.NOEKF_TRANSLATION_VECTOR_3, noesis.NOEKF_INTERPOLATE_LINEAR)
 				kfBone.setRotation(krots, noesis.NOEKF_ROTATION_QUATERNION_4, noesis.NOEKF_INTERPOLATE_LINEAR)
 				kfBone.setScale(kscls, noesis.NOEKF_SCALE_SCALAR_1, noesis.NOEKF_INTERPOLATE_LINEAR)
 				kfBones.append(kfBone)
+		
+		for i in range(0, self.numBones):
+			kfBone = NoeKeyFramedBone(i+self.numBones)
+			ktrss = []
+			krots = []
+			kscls = []
 
-		kAnim = NoeKeyFramedAnim(animName, model.bones, kfBones, 24.0)
+			krots.append(NoeKeyFramedValue(0.0, NoeQuat((0,0,0,0))))
+			kscls.append(NoeKeyFramedValue(0.0, 1.0))
+			if i > 0 and i < len(boneSizes):
+				ktrss.append(NoeKeyFramedValue(0.0, NoeVec3((boneSizes[i], 0, 0))))
+			else : 
+				ktrss.append(NoeKeyFramedValue(0.0, NoeVec3((0, 0, 0))))
+			kfBone.setTranslation(ktrss, noesis.NOEKF_TRANSLATION_VECTOR_3, noesis.NOEKF_INTERPOLATE_LINEAR)
+			kfBone.setRotation(krots, noesis.NOEKF_ROTATION_QUATERNION_4, noesis.NOEKF_INTERPOLATE_LINEAR)
+			kfBone.setScale(kscls, noesis.NOEKF_SCALE_SCALAR_1, noesis.NOEKF_INTERPOLATE_LINEAR)
+			kfBones.append(kfBone)
+
+		kAnim = NoeKeyFramedAnim("anim_"+str(self.idx), model.bones, kfBones, 24.0)
 		return kAnim
 
 def quatFromAxisAnle(axis, angle):
@@ -1351,15 +1418,6 @@ def color16to32( c ):
 	return [ r * 8, g * 8, b * 8, 255 ]
 def rot13toRad(angle):
 	return angle*(1/4096)*math.pi
-
-
-
-
-
-
-
-
-
 
 
 
@@ -1406,18 +1464,18 @@ def MDPToZND(mdpName):
 	table.append(["MAP176.MPD"]) # 37
 	table.append(["MAP177.MPD"]) # 38 The House Gilgitte
 	table.append(["MAP171.MPD"]) # 39 Plateia Lumitar
-	table.append([]) # 40
-	table.append([]) # 41
+	table.append(["MAP179.MPD", "MAP180.MPD", "MAP181.MPD", "MAP182.MPD", "MAP183.MPD", "MAP184.MPD", "MAP185.MPD", "MAP186.MPD", "MAP187.MPD", "MAP188.MPD", "MAP189.MPD", "MAP190.MPD", "MAP191.MPD", "MAP192.MPD", "MAP193.MPD", "MAP194.MPD", "MAP195.MPD", "MAP196.MPD", "MAP197.MPD", "MAP198.MPD", "MAP199.MPD", "MAP200.MPD", "MAP201.MPD", "MAP202.MPD", "MAP203.MPD", "MAP204.MPD"]) # 40 Snowfly Forest
+	table.append(["MAP348.MPD", "MAP349.MPD", "MAP350.MPD"]) # 41 Snowfly Forest East
 	table.append(["MAP205.MPD"]) # 42 Workshop "Work of Art"
 	table.append(["MAP206.MPD"]) # 43 Workshop "Magic Hammer"
 	table.append(["MAP207.MPD"]) # 44 Wkshop "Keane's Crafts"
 	table.append(["MAP208.MPD"]) # 45 Workshop "Metal Works"
 	table.append(["MAP209.MPD"]) # 46 Wkshop "Junction Point"
 	table.append(["MAP210.MPD"]) # 47 Workshop "Godhands"
-	table.append([]) # 48
-	table.append([]) # 49
+	table.append(["MAP220.MPD", "MAP221.MPD", "MAP222.MPD", "MAP223.MPD", "MAP224.MPD", "MAP225.MPD", "MAP226.MPD", "MAP227.MPD", "MAP228.MPD", "MAP229.MPD", "MAP230.MPD", "MAP231.MPD", "MAP232.MPD", "MAP233.MPD", "MAP234.MPD", "MAP235.MPD", "MAP236.MPD", "MAP237.MPD", "MAP238.MPD", "MAP239.MPD", "MAP240.MPD", "MAP241.MPD", "MAP242.MPD", "MAP243.MPD", "MAP244.MPD", "MAP245.MPD", "MAP246.MPD"]) # 48 Undercity West
+	table.append(["MAP247.MPD", "MAP248.MPD", "MAP249.MPD", "MAP250.MPD", "MAP251.MPD", "MAP252.MPD", "MAP253.MPD", "MAP254.MPD", "MAP255.MPD", "MAP256.MPD", "MAP257.MPD", "MAP258.MPD", "MAP259.MPD"]) # 49 Undercity East
 	table.append(["MAP260.MPD", "MAP261.MPD", "MAP262.MPD", "MAP263.MPD", "MAP264.MPD", "MAP265.MPD", "MAP266.MPD", "MAP267.MPD", "MAP268.MPD", "MAP269.MPD", "MAP270.MPD", "MAP271.MPD", "MAP272.MPD", "MAP273.MPD", "MAP274.MPD", "MAP275.MPD", "MAP276.MPD", "MAP277.MPD", "MAP278.MPD", "MAP279.MPD", "MAP280.MPD", "MAP281.MPD", "MAP282.MPD", "MAP283.MPD"]) # 50
-	table.append([]) # 51
+	table.append(["MAP284.MPD", "MAP285.MPD", "MAP286.MPD", "MAP287.MPD", "MAP288.MPD", "MAP289.MPD", "MAP290.MPD", "MAP291.MPD", "MAP292.MPD", "MAP293.MPD", "MAP294.MPD", "MAP295.MPD", "MAP296.MPD", "MAP297.MPD", "MAP298.MPD", "MAP299.MPD", "MAP300.MPD", "MAP301.MPD", "MAP302.MPD", "MAP303.MPD", "MAP304.MPD", "MAP305.MPD", "MAP306.MPD", "MAP307.MPD", "MAP308.MPD", "MAP309.MPD", "MAP310.MPD", "MAP410.MPD", "MAP411.MPD"]) # 51 Abandoned Mines B2
 	table.append([]) # 52
 	table.append(["MAP341.MPD"]) # 53
 	table.append([]) # 54
