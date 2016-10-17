@@ -58,7 +58,7 @@ def VSTIMCheck(data):
 	if bs.read(">B")[0] != 0x10:
 		return 0
 	return 1
-def VSWEPParser(bs):
+def VSWEPParser(bs, idWeaponMaterial = 0):
 	h = bs.read("4s")[0]
 	if h != VS_HEADER:
 		return None
@@ -92,7 +92,7 @@ def VSWEPParser(bs):
 	for i in range(0, len(textures)):
 		mat = NoeMaterial("mat_"+str(i), textures[i].name)
 		materials.append(mat)
-	meshes = VSBuildModel(bones, groups, vertices, faces, textures, materials)
+	meshes = VSBuildModel(bones, groups, vertices, faces, textures, materials, idWeaponMaterial)
 	anims = []
 	NMM = NoeModelMaterials(textures, materials)
 	mdl = NoeModel(meshes, bones, anims, NMM)
@@ -238,13 +238,15 @@ def VSLoadARM(data, mdlList):
 
 	return 1
 def VSLoadZND(data, texList):
-	p = ZNDParser(data)
+	p = ZNDParser(data, str(rapi.getLocalFileName(rapi.getInputName())))
 	textures = p.parse()
-	for i in range(0, len(textures)):
+	lt = len(textures)
+	for i in range(0, lt):
 		texList.append(textures[i])
 	return 1
 class ZNDParser():
-	def __init__(self, data):
+	def __init__(self, data, zndName):
+		self.ZNDId = str(rapi.getExtensionlessName(zndName)).lower()
 		self.data = data
 		self.buffer = None
 		self.tims = []
@@ -255,6 +257,7 @@ class ZNDParser():
 		mpdPtr, mpdLen, enemyPtr, enemyLen, timPtr, timLen, wave = bs.read("6IB")
 		mpdNum = int(mpdLen/8)
 		pads = bs.read("BHI")
+
 		# MDP Section
 		mpdLBAs = []
 		mpdSizes = []
@@ -263,20 +266,28 @@ class ZNDParser():
 		for i in range(0, mpdNum):
 			mpdLBAs.append(bs.read("I")[0])
 			mpdSizes.append(bs.read("I")[0])
-		numEnemies = bs.read("I")[0]
+
 		# ZUD Section
-		zudLBAs = []
-		zudSizes = []
+
+		#print(bs.getOffset(), enemyPtr)
 		if bs.getOffset() != enemyPtr:
 			bs.setOffset(enemyPtr)
+		numEnemies = bs.read("I")[0]
+		#print("numEnemies : "+str(numEnemies)+' -> enemyLen : '+str(enemyLen))
+		zudLBAs = []
+		zudSizes = []
 		for i in range(0, numEnemies):
-			zudLBAs.append(bs.read("I")[0])
+			zudLBAs.append(bs.read("4s")[0])
 			zudSizes.append(bs.read("I")[0])
 
+		#print("zudLBAs : "+repr(zudLBAs))
+		#print(repr(zudSizes))
 		enemies = []
 		for i in range(0, numEnemies):
-			nums = bs.read("H2B")
-			name = bs.read("18s")[0]
+			e = VSEnemy()
+			#print(bs.getOffset())
+			e.hydrate(bs)
+			#print(repr(e))
 			# ...
 
 		# Textures section
@@ -309,8 +320,8 @@ class ZNDParser():
 				return tim
 		return self.tims[0]
 	def getMaterial(self, textureId, clutId, textures, materials):
-		idx = str(textureId) + '-' + str(clutId)
-		material = self.contains("mat_"+str(textureId)+"_"+str(clutId)) 
+		idx = str(textureId)+"_"+str(clutId)
+		material = self.contains(self.ZNDId+"_mat_"+idx) 
 		if  material != None:
 			return material
 		else:
@@ -325,14 +336,17 @@ class ZNDParser():
 					clut = tim.buildCLUT( x, y )
 					break
 			texture = textureTIM.build( clut )
-			texture.name = "tex_"+str(textureId)+"_"+str(clutId)
-			material = NoeMaterial("mat_"+str(textureId)+"_"+str(clutId), texture.name)
+			texture.name = self.ZNDId+"_tex_"+idx+".png"
+			material = NoeMaterial(self.ZNDId+"_mat_"+idx, texture.name)
 			self.textures.append( texture )
 			self.materials.append(material)
 			textures.append(texture)
 			materials.append(material)
 			return material
+
+
 def VSLoadMPD(data, mdlList):
+	numGroups = 0
 	bs = NoeBitStream(data)
 	# Header section
 	ptrRoomSection, lenRoomSection, ptrClearedSection, lenClearedSection, ptrScriptSection, lenScriptSection, ptrDoorSection, lenDoorSection, ptrEnemySection, lenEnemySection, ptrTreasureSection, lenTreasureSection = bs.read("12I")
@@ -340,120 +354,161 @@ def VSLoadMPD(data, mdlList):
 	# RoomHeader
 	lenGeometrySection, lenCollisionSection, lenSubSection03, lenDoorSection, lenLightingSection, lenSubSection06, lenSubSection07, lenSubSection08, lenSubSection09, lenSubSection0A, lenSubSection0B, lenTextureEffectsSection = bs.read("12I")
 	lenSubSection0D, lenSubSection0E, lenSubSection0F, lenSubSection10, lenSubSection11, lenSubSection12, lenSubSection13, lenAKAOSubSection, lenSubSection15, lenSubSection16, lenSubSection17, lenSubSection18 = bs.read("12I")
-	# GeometrySection (Polygon groups)
-	numGroups = bs.read("I")[0]
-	groups = []
-	for i in range (0, numGroups):
-		g = MDPGroup()
-		g.hydrate(bs)
-		groups.append(g)
-	for i in range (0, numGroups):
-		g = groups[i]
-		numTri, numQuad = bs.read("2I")
-		faces = []
-		for j in range (0, numTri):
-			f = MDPFace(g)
-			f.hydrate(bs, False)
-			mesh = g.getMesh( bs, f.textureId, f.clutId )
-			mesh.addFace( f )
-		for j in range (0, numQuad):
-			f = MDPFace(g)
-			f.hydrate(bs, True)
-			mesh = g.getMesh( bs, f.textureId, f.clutId )
-			mesh.addFace( f )
-	# CollisionSection
+
+	if lenRoomSection > 4:
+		if lenGeometrySection > 4:
+			# GeometrySection (Polygon groups)
+			numGroups = bs.read("I")[0]
+			groups = []
+			for i in range (0, numGroups):
+				g = MDPGroup()
+				g.hydrate(bs)
+				groups.append(g)
+			for i in range (0, numGroups):
+				g = groups[i]
+				numTri, numQuad = bs.read("2I")
+				faces = []
+				for j in range (0, numTri):
+					f = MDPFace(g)
+					f.hydrate(bs, False)
+					mesh = g.getMesh( bs, f.textureId, f.clutId )
+					mesh.addFace( f )
+				for j in range (0, numQuad):
+					f = MDPFace(g)
+					f.hydrate(bs, True)
+					mesh = g.getMesh( bs, f.textureId, f.clutId )
+					mesh.addFace( f )
+
+		#if lenCollisionSection > 4:
+			# CollisionSection
+		#	TyleWidth, TyleHeight, unkn1, unkn2 = bs.read('4H')
+		#	print(TyleWidth, TyleHeight, unkn1, unkn2)
+		#	FloorHeights = []
+		#	CeilingHeights = []
+		#	Inclinaisons = []
+		#	for i in range (0, TyleWidth): # West to East, South to North
+		#		for j in range (0, TyleHeight):
+		#			value = NoeVec3((i*128, bs.read('B')[0], j*128))
+		#			FloorHeights.append(value)
+
+		#	for i in range (0, TyleWidth*TyleHeight): # West to East, South to North
+		#		for j in range (0, TyleHeight):
+		#			value = NoeVec3((i*128, bs.read('B')[0], j*128))
+		#			CeilingHeights.append(value)
+	#
+	#		for i in range (0, int(TyleWidth*TyleHeight/2)): # appears to be nibble based
+	#			rawValue = bs.read('B')[0]
+	#			i1 = math.floor(rawValue/16)
+	#			i2 = rawValue-(i1*16)
+	#			Inclinaisons.append(i1)
+	#			Inclinaisons.append(i2)
+
+			#+$00	?	unknown (some form of bitmask one bit per tyle)
+
 	# ClearedSection
 	# ScriptSection 
 	# ...
 
-	textures = []
-	materials = []
 
-	MPDFileName = str(rapi.getLocalFileName(rapi.getInputName()))
-	zndPath = rapi.getDirForFilePath(rapi.getInputName())+MDPToZND(MPDFileName)
-	
-	if rapi.checkFileExists(zndPath):
-		zndDatas = rapi.loadIntoByteArray(zndPath)
-		z = ZNDParser(zndDatas)
-		z.parse()
-	else:
-		z = None
+	if numGroups > 0:
+		textures = [NoeTexture("alpha_green", 1, 1, bytearray([ 0x76, 0xFF, 0x03, 64]))]
+		materials = [NoeMaterial("mat_alpha_green", "alpha_green")]
 
-	meshes = []
-	for i in range (0, numGroups):
-		g = groups[i]
-
-		tw = 256
-		th = 256
+		MPDFileName = str(rapi.getLocalFileName(rapi.getInputName()))
+		zndFileName = MDPToZND(MPDFileName)
+		zndPath = rapi.getDirForFilePath(rapi.getInputName())+zndFileName
 		
-		lgm = len(g.meshes)
-		for j in range (0, lgm):
-			iv = 0
-			idxList = []
-			posList = []
-			uvList = []
-			nmList = []
-			m = g.meshes[j]
+		if rapi.checkFileExists(zndPath):
+			zndDatas = rapi.loadIntoByteArray(zndPath)
+			z = ZNDParser(zndDatas, zndFileName)
+			z.parse()
+		else:
+			z = None
 
-			lmf = len(m.faces)
-			for k in range (0, lmf):
-				f = m.faces[k]
-				f.build()
+		meshes = []
+		for i in range (0, numGroups):
+			g = groups[i]
 
-				if (f.quad == True):
-					posList.append(f.p1)
-					posList.append(f.p2)
-					posList.append(f.p3)
-					posList.append(f.p4)
-					uvList.append(NoeVec3([f.u2/tw, f.v2/th, 0]))
-					uvList.append(NoeVec3([f.u3/tw, f.v3/th, 0]))
-					uvList.append(NoeVec3([f.u1/tw, f.v1/th, 0]))
-					uvList.append(NoeVec3([f.u4/tw, f.v4/th, 0]))
-					#nmList.append(f.n)
-					#nmList.append(f.n)
-					#nmList.append(f.n)
-					#nmList.append(f.n)
-					idxList.append(iv+2)
-					idxList.append(iv+1)
-					idxList.append(iv+0)
-					idxList.append(iv+1)
-					idxList.append(iv+2)
-					idxList.append(iv+3)
-					iv += 4;
+			tw = 256
+			th = 256
+			
+			lgm = len(g.meshes)
+			for j in range (0, lgm):
+				iv = 0
+				idxList = []
+				posList = []
+				uvList = []
+				nmList = []
+				m = g.meshes[j]
+
+				lmf = len(m.faces)
+				for k in range (0, lmf):
+					f = m.faces[k]
+					f.build()
+
+					if (f.quad == True):
+						posList.append(f.p1)
+						posList.append(f.p2)
+						posList.append(f.p3)
+						posList.append(f.p4)
+						uvList.append(NoeVec3([f.u2/tw, f.v2/th, 0]))
+						uvList.append(NoeVec3([f.u3/tw, f.v3/th, 0]))
+						uvList.append(NoeVec3([f.u1/tw, f.v1/th, 0]))
+						uvList.append(NoeVec3([f.u4/tw, f.v4/th, 0]))
+						nmList.append(f.n)
+						nmList.append(f.n)
+						nmList.append(f.n)
+						nmList.append(f.n)
+						idxList.append(iv+2)
+						idxList.append(iv+1)
+						idxList.append(iv+0)
+						idxList.append(iv+1)
+						idxList.append(iv+2)
+						idxList.append(iv+3)
+						iv += 4;
+					else:
+						posList.append(f.p1)
+						posList.append(f.p2)
+						posList.append(f.p3)
+						uvList.append(NoeVec3([f.u2/tw, f.v2/th, 0]))
+						uvList.append(NoeVec3([f.u3/tw, f.v3/th, 0]))
+						uvList.append(NoeVec3([f.u1/tw, f.v1/th, 0]))
+						nmList.append(f.n)
+						nmList.append(f.n)
+						nmList.append(f.n)
+						idxList.append(iv+2)
+						idxList.append(iv+1)
+						idxList.append(iv+0)
+						iv += 3;
+
+				if z != None:
+					mat = z.getMaterial(m.textureId, m.clutId, textures, materials)
+					mesh = NoeMesh(idxList, posList, "gpr_"+str(i), mat.name)
 				else:
-					posList.append(f.p1)
-					posList.append(f.p2)
-					posList.append(f.p3)
-					uvList.append(NoeVec3([f.u2/tw, f.v2/th, 0]))
-					uvList.append(NoeVec3([f.u3/tw, f.v3/th, 0]))
-					uvList.append(NoeVec3([f.u1/tw, f.v1/th, 0]))
-					#nmList.append(f.n)
-					#nmList.append(f.n)
-					#nmList.append(f.n)
-					idxList.append(iv+2)
-					idxList.append(iv+1)
-					idxList.append(iv+0)
-					iv += 3;
+					mesh = NoeMesh(idxList, posList, "gpr_"+str(i))
 
-			if z != None:
-				mat = z.getMaterial(m.textureId, m.clutId, textures, materials)
-				mesh = NoeMesh(idxList, posList, "gpr_"+str(i), mat.name)
-			else:
-				mesh = NoeMesh(idxList, posList, "gpr_"+str(i))
-
-			mesh.setUVs(uvList)
-			meshes.append(mesh)
+				mesh.setUVs(uvList)
+				mesh.setNormals(nmList)
+				meshes.append(mesh)
+		
+		#idxList = []
+		#posList = []
+		#loop = int(len(FloorHeights))
+		#for i in range (0, loop):
+		#	posList.append(FloorHeights[i])
+		#	mesh = NoeMesh(idxList, posList, "gpr_"+str(i), "mat_alpha_green")
+		#	meshes.append(mesh)
 
 
 
-	NMM = NoeModelMaterials(textures, materials)
-	mdl = NoeModel(meshes, [], [], NMM)
-
-	mdlList.append(mdl)
+		NMM = NoeModelMaterials(textures, materials)
+		mdl = NoeModel(meshes, [], [], NMM)
+		mdlList.append(mdl)
 	return 1
 def VSLoadZUD(data, mdlList):
 	bs = NoeBitStream(data)
 	idCharacter, idWeapon, idWeaponCategory, idWeaponMaterial, idShield, idShieldMaterial, uk, pad = bs.read("8B")
+	#print("idCharacter : "+str(idCharacter)+", idWeapon : "+str(idWeapon)+", idWeaponCategory : "+str(idWeaponCategory)+", idWeaponMaterial : "+str(idWeaponMaterial)+", idShield : "+str(idShield)+", idShieldMaterial : "+str(idShieldMaterial))
 	ptrCharacterSHP, lenCharacterSHP, ptrWeaponWEP, lenWeaponWEP, ptrShieldWEP, lenShieldWEP, ptrCommonSEQ, lenCommonSEQ, ptrBattleSEQ, lenBattleSEQ = bs.read("10I")
 	#print("ptrCharacterSHP : "+str(ptrCharacterSHP)+" 	lenCharacterSHP : "+str(lenCharacterSHP))
 	#print("ptrWeaponWEP : "+str(ptrWeaponWEP)+" 	lenWeaponWEP : "+str(lenWeaponWEP))
@@ -461,21 +516,96 @@ def VSLoadZUD(data, mdlList):
 	#print("ptrCommonSEQ : "+str(ptrCommonSEQ)+" 	lenCommonSEQ : "+str(lenCommonSEQ))
 	#print("ptrBattleSEQ : "+str(ptrBattleSEQ)+" 	lenBattleSEQ : "+str(lenBattleSEQ))
 
+	char = None
+
 	if ptrCharacterSHP != bs.getOffset():
 		bs.setOffset(ptrCharacterSHP)
 	if lenCharacterSHP > 0:
 		char = VSSHPParser(bs)
 		mdlList.append(char)
+
 	if ptrWeaponWEP != bs.getOffset():
 		bs.setOffset(ptrWeaponWEP)
 	if lenWeaponWEP > 0:
-		weapon = VSWEPParser(bs)
+		weapon = VSWEPParser(bs, idWeaponMaterial-1)
+
 		mdlList.append(weapon)
+
 	if ptrShieldWEP != bs.getOffset():
 		bs.setOffset(ptrShieldWEP)
 	if lenShieldWEP > 0:
 		shield = VSWEPParser(bs)
+
 		mdlList.append(shield)
+
+	anims = []
+	boneSizes = []
+	boneModes = []
+	if ptrCommonSEQ != bs.getOffset():
+		bs.setOffset(ptrCommonSEQ)
+	if lenCommonSEQ > 0:
+		basePtr = bs.getOffset()
+		numSlots, numBones, size, h3 = bs.read('2H2I')
+		slotPtr = int(bs.read('I')[0] + 8)
+		dataPtr = slotPtr+numSlots
+		numAnimations = int((dataPtr - numSlots - 16) / ( numBones * 4 + 10 ))
+
+		animations = []
+		for i in range(0, numAnimations):
+			a = VSAnim()
+			a.hydrate(bs, i, numBones)
+			animations.append(a)
+
+		slots = []
+		for i in range(0, numSlots):
+			slots.append(bs.read('b')[0])
+
+		for i in range(0, numAnimations):
+			animations[i].getData(bs, basePtr, dataPtr, animations)
+
+		for i in range(0, numBones):
+			matrix = char.bones[i].getMatrix()
+			boneSizes.append(matrix[0][1])
+			boneModes.append(matrix[0][2])
+			matrix[0] = NoeVec3((1, 0.0, 0.0))
+			char.bones[i].setMatrix(matrix)
+		for i in range(0, numAnimations):
+			anims.append(animations[i].build(char, boneSizes, boneModes))
+	
+	if ptrBattleSEQ != bs.getOffset():
+		bs.setOffset(ptrBattleSEQ)
+	if lenBattleSEQ > 0:
+		basePtr = bs.getOffset()
+		numSlots, numBones, size, h3 = bs.read('2H2I')
+		slotPtr = int(bs.read('I')[0] + 8)
+		dataPtr = slotPtr+numSlots
+		numAnimations = int((dataPtr - numSlots - 16) / ( numBones * 4 + 10 ))
+
+		animations = []
+		for i in range(0, numAnimations):
+			a = VSAnim()
+			a.hydrate(bs, i, numBones)
+			animations.append(a)
+
+		slots = []
+		for i in range(0, numSlots):
+			slots.append(bs.read('b')[0])
+
+		for i in range(0, numAnimations):
+			animations[i].getData(bs, basePtr, dataPtr, animations)
+
+		for i in range(0, numBones):
+			matrix = char.bones[i].getMatrix()
+			if len(boneSizes) < numBones:
+				boneSizes.append(matrix[0][1])
+				boneModes.append(matrix[0][2])
+			matrix[0] = NoeVec3((1, 0.0, 0.0))
+			char.bones[i].setMatrix(matrix)
+		for i in range(0, numAnimations):
+			anims.append(animations[i].build(char, boneSizes, boneModes))
+
+	if char != None and len(anims) > 0:
+		char.setAnims(anims)
 
 	return 1
 def VSLoadTIM(data, texList):
@@ -633,13 +763,13 @@ def VSTexturesSection(bs, isWep, drawTex = True):
 					noesis.saveImageRGBA(texName, textures[i])
 
 	return textures
-def VSBuildModel(bones, groups, vertices, faces, textures, materials):
+def VSBuildModel(bones, groups, vertices, faces, textures, materials, matId = 0):
 	meshes = []
 	hasTex = True
 	if len(textures) > 0:
 		halfW = textures[0].width/2
 		halfH = textures[0].height/2
-		material = materials[0]
+		material = materials[matId]
 	else:
 		hasTex = False
 
@@ -647,11 +777,11 @@ def VSBuildModel(bones, groups, vertices, faces, textures, materials):
 		hasTex = False
 
 	lb = len(bones)
+	idxList = []
+	posList = []
+	uvList = []
+	wList = []
 	for i in range (0, lb):
-		idxList = []
-		posList = []
-		uvList = []
-		wList = []
 		lf = len(faces)
 		for x in range(0, lf):
 			if len(faces[x].vertices) == 3 and int(faces[x].vertices[0]) < len(vertices):
@@ -666,14 +796,14 @@ def VSBuildModel(bones, groups, vertices, faces, textures, materials):
 							weights = [1]
 							wList.append(NoeVertWeight(indices, weights))
 
-		if len(posList)/3 >= 1:
-			if hasTex == True:
-				mesh = NoeMesh(idxList, posList, "mesh_"+str(i), material.name)
-				mesh.setUVs(uvList)
-				mesh.setWeights(wList)
-			else :
-				mesh = NoeMesh(idxList, posList, "mesh_"+str(i))
-			meshes.append(mesh)
+	if len(posList)/3 >= 1:
+		if hasTex == True:
+			mesh = NoeMesh(idxList, posList, "mesh_"+str(i), material.name)
+			mesh.setUVs(uvList)
+			mesh.setWeights(wList)
+		else :
+			mesh = NoeMesh(idxList, posList, "mesh_"+str(i))
+		meshes.append(mesh)
 	return meshes
 
 class VSBone:
@@ -1111,7 +1241,7 @@ class MDPFace:
 		self.p4x = self.p4y = self.p4z = self.r4 = self.g4 = self.b4 = self.u4 = self.v4 = 0
 		self.clutId = 0
 		self.textureId = 0
-		self.p1 = self.p2 = self.p3 = self.p4 = self.n = NoeVec3([0,0,0])
+		self.p1 = self.p2 = self.p3 = self.p4 = self.n = NoeVec3((0,0,0))
 	def hydrate(self, bs, isQuad):
 		self.quad = isQuad;
 		self.p1x, self.p1y, self.p1z = bs.read("3h")
@@ -1128,11 +1258,27 @@ class MDPFace:
 		self.p3 = NoeVec3( [self.p3x * self.group.scale + self.p1x, self.p3y * self.group.scale + self.p1y, self.p3z * self.group.scale + self.p1z] )
 		if self.quad == True:
 			self.p4 = NoeVec3( [self.p4x * self.group.scale + self.p1x, self.p4y * self.group.scale + self.p1y, self.p4z * self.group.scale + self.p1z] )
+		u = self.p2 - self.p1
+		v = self.p3 - self.p1
+		self.n = NoeVec3( (u[1]*v[2] - u[2]*v[1], u[2]*v[0] - u[0]*v[2], u[0]*v[1] - u[1]*v[0]) )
+		self.n.normalize()
+		self.n = -self.n
+class VSEnemy:
+	def __init__(self):
+		self.id = 0
+		self.name = ""
+		self.stats = []
+	def __repr__(self):
+		return "(VSEnemy Id : "+str(self.id)+" name : "+str(self.name)+" stats : "+repr(self.stats)+")"
+	def hydrate(self, bs):
+		basePtr = bs.getOffset()
+		nums = bs.read("H2B")
+		self.name = bs.read("18s")[0]
+		self.stats = bs.read("2H14B")
 
-		#self.n = NoeVec3( [self.p2x, self.p2y, self.p2z] )
-		#self.n.cross( NoeVec3( [self.p3x, self.p3y, self.p3z] ) )
-		#self.n.normalize();
-		#self.n = -self.n
+		bs.setOffset(basePtr+460)
+		self.id = int(bs.read("I")[0])
+
 class VSTIM():
 	def __init__(self):
 		self.h = 0
@@ -1254,7 +1400,7 @@ class VSAnim:
 			localPtr2 = self.base.ptrBones[i]+basePtr+dataPtr
 
 			bs.setOffset(localPtr2)
-			rx, ry, rz = bs.read('>3h')# BIG_ENDIAN
+			rx, ry, rz = bs.read('>3H')# BIG_ENDIAN
 			self.pose.append([ rx, ry, rz ])
 
 			# readKeyframes
@@ -1284,20 +1430,20 @@ class VSAnim:
 			# number of frames, byte case
 			f = op & 0x1f
 			if f == 0x1f :
-				f = 0x20 + int(bs.read('B')[0])
+				f = 0x20 + bs.read('b')[0]
 			else:
 				f = 1+f
 		else:
 			# number of frames, half word case
 			f = op & 0x3
 			if f == 0x3 :
-				f = 4 + int(bs.read('B')[0])
+				f = 4 + bs.read('b')[0]
 			else:
 				f = 1+f
 			
 			# half word values
 			op = op << 3
-			h = int(bs.read('>h')[0]) # BIG_ENDIAN
+			h = bs.read('>h')[0] # BIG_ENDIAN
 			
 			if ( h & 0x4 ) > 0 :
 				x = h >> 3
@@ -1334,12 +1480,10 @@ class VSAnim:
 		for i in range(0, self.numBones):
 			if i < len(self.keyframes):
 				keyframes = self.keyframes[i]
-
-				#print("| -- Keys bone#"+str(i)+" -> "+repr(self.keyframes[i])+" len:"+str(len(self.keyframes[i])))
 				pose = self.pose[i]
-				_rx = pose[0]*2
-				_ry = pose[1]*2
-				_rz = pose[2]*2
+				rx = pose[0]*2
+				ry = pose[1]*2
+				rz = pose[2]*2
 
 				t = 0
 				kfl = len(self.keyframes[i])
@@ -1347,35 +1491,35 @@ class VSAnim:
 				ktrss = []
 				krots = []
 				kscls = []
+				ktrss.append(NoeKeyFramedValue(0.0, NoeVec3((0, 0, 0))))
+				kscls.append(NoeKeyFramedValue(0.0, 1.0))
 				for j in range(0, kfl):
 					keyframe = keyframes[j]
 					f = keyframe[3]
 					t += f
 					if keyframe[0] == None:
 						keyframe[0] = keyframes[j-1][0]
+
 					if keyframe[1] == None:
 						keyframe[1] = keyframes[j-1][1]
+
 					if keyframe[2] == None:
 						keyframe[2] = keyframes[j-1][2]
 
-					rx = rot13toRad(_rx + keyframe[0]*f)
-					ry = rot13toRad(_ry + keyframe[1]*f)
-					rz = rot13toRad(_rz + keyframe[2]*f)
+					rx += keyframe[0]*f
+					ry += keyframe[1]*f
+					rz += keyframe[2]*f
 
 					q = NoeQuat()
-					qu = quatFromAxisAnle( NoeVec3( (1, 0, 0) ), rx )
-					qv = quatFromAxisAnle( NoeVec3( (0, 1, 0) ), ry )
-					qw = quatFromAxisAnle( NoeVec3( (0, 0, 1) ), rz )
+					qu = quatFromAxisAnle( NoeVec3( (1, 0, 0) ), rot13toRad(rx) )
+					qv = quatFromAxisAnle( NoeVec3( (0, 1, 0) ), rot13toRad(ry) )
+					qw = quatFromAxisAnle( NoeVec3( (0, 0, 1) ), rot13toRad(rz) )
 					q = qw * qv * qu
 
-					angles = NoeAngles((rx, ry, rz)).toDegrees().toQuat()
-
-					time = t*0.08
-					krots.append(NoeKeyFramedValue(time, NoeQuat((-q[0], -q[1], -q[2], q[3]))))
+					time = t*0.06
+					krots.append(NoeKeyFramedValue(time, NoeQuat((q[0], q[1], q[2], -q[3]))))
 
 				kfBone = NoeKeyFramedBone(i)
-				ktrss.append(NoeKeyFramedValue(0.0, NoeVec3((0, 0, 0))))
-				kscls.append(NoeKeyFramedValue(0.0, 1.0))
 				kfBone.setTranslation(ktrss, noesis.NOEKF_TRANSLATION_VECTOR_3, noesis.NOEKF_INTERPOLATE_LINEAR)
 				kfBone.setRotation(krots, noesis.NOEKF_ROTATION_QUATERNION_4, noesis.NOEKF_INTERPOLATE_LINEAR)
 				kfBone.setScale(kscls, noesis.NOEKF_SCALE_SCALAR_1, noesis.NOEKF_INTERPOLATE_LINEAR)
@@ -1408,7 +1552,12 @@ def quatFromAxisAnle(axis, angle):
 	_y = axis[1] * s
 	_z = axis[2] * s
 	_w = math.cos( halfAngle )
-	return NoeQuat((_x, _y, _z, _w))
+	q = NoeQuat((_x, _y, _z, _w)).normalize()
+	return q
+def rot13toRad(angle):
+	return angle*(1/4096)*math.pi
+
+
 def color16to32( c ):
 	b = ( c & 0x7C00 ) >> 10
 	g = ( c & 0x03E0 ) >> 5
@@ -1416,8 +1565,6 @@ def color16to32( c ):
 	if c == 0 :
 		return [ 0, 0, 0, 0 ]
 	return [ r * 8, g * 8, b * 8, 255 ]
-def rot13toRad(angle):
-	return angle*(1/4096)*math.pi
 
 
 
@@ -1476,11 +1623,15 @@ def MDPToZND(mdpName):
 	table.append(["MAP247.MPD", "MAP248.MPD", "MAP249.MPD", "MAP250.MPD", "MAP251.MPD", "MAP252.MPD", "MAP253.MPD", "MAP254.MPD", "MAP255.MPD", "MAP256.MPD", "MAP257.MPD", "MAP258.MPD", "MAP259.MPD"]) # 49 Undercity East
 	table.append(["MAP260.MPD", "MAP261.MPD", "MAP262.MPD", "MAP263.MPD", "MAP264.MPD", "MAP265.MPD", "MAP266.MPD", "MAP267.MPD", "MAP268.MPD", "MAP269.MPD", "MAP270.MPD", "MAP271.MPD", "MAP272.MPD", "MAP273.MPD", "MAP274.MPD", "MAP275.MPD", "MAP276.MPD", "MAP277.MPD", "MAP278.MPD", "MAP279.MPD", "MAP280.MPD", "MAP281.MPD", "MAP282.MPD", "MAP283.MPD"]) # 50
 	table.append(["MAP284.MPD", "MAP285.MPD", "MAP286.MPD", "MAP287.MPD", "MAP288.MPD", "MAP289.MPD", "MAP290.MPD", "MAP291.MPD", "MAP292.MPD", "MAP293.MPD", "MAP294.MPD", "MAP295.MPD", "MAP296.MPD", "MAP297.MPD", "MAP298.MPD", "MAP299.MPD", "MAP300.MPD", "MAP301.MPD", "MAP302.MPD", "MAP303.MPD", "MAP304.MPD", "MAP305.MPD", "MAP306.MPD", "MAP307.MPD", "MAP308.MPD", "MAP309.MPD", "MAP310.MPD", "MAP410.MPD", "MAP411.MPD"]) # 51 Abandoned Mines B2
-	table.append([]) # 52
-	table.append(["MAP341.MPD"]) # 53
-	table.append([]) # 54
+	table.append(["MAP351.MPD", "MAP352.MPD", "MAP353.MPD", "MAP354.MPD", "MAP355.MPD", "MAP356.MPD", "MAP357.MPD", "MAP358.MPD"]) # 52 Escapeway
+	table.append(["MAP311.MPD", "MAP312.MPD", "MAP313.MPD", "MAP314.MPD", "MAP315.MPD", "MAP316.MPD", "MAP317.MPD", "MAP318.MPD", "MAP319.MPD", "MAP320.MPD", "MAP321.MPD", "MAP322.MPD", "MAP323.MPD", "MAP324.MPD", "MAP325.MPD", "MAP326.MPD", "MAP327.MPD", "MAP328.MPD", "MAP329.MPD", "MAP330.MPD", "MAP331.MPD", "MAP332.MPD", "MAP333.MPD", "MAP334.MPD", "MAP335.MPD", "MAP336.MPD", "MAP337.MPD", "MAP338.MPD", "MAP339.MPD", "MAP340.MPD", "MAP341.MPD", "MAP342.MPD"]) # 53 Limestone Quarry
+	table.append(["MAP343.MPD", "MAP344.MPD", "MAP345.MPD", "MAP346.MPD", "MAP347.MPD"]) # 54
 	table.append([]) # 55
+	for i in range(359, 382):
+		table[55].append("MAP"+str(i)+".MPD")
 	table.append([]) # 56
+	for i in range(382, 408):
+		table[56].append("MAP"+str(i)+".MPD")
 	table.append(["MAP103.MPD"])
 	table.append(["MAP104.MPD"])
 	table.append(["MAP413.MPD"])
