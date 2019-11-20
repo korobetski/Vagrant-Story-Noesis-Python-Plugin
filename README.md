@@ -8,6 +8,10 @@ Vagrant Story files formats are mostly explained here : http://datacrystal.romha
 
 Some parts of this script (.SEQ & TIM) is simply a python version of a javascript original script : https://github.com/morris/vstools
 
+
+Project moved here : https://github.com/korobetski/Vagrant-Story-Unity-Parser
+
+
 - .WEP Weapon Model format is fully supported
 - .SHP reader is fully fonctionnal but need to be linked with .SEQ for bones position
 - .SEQ Animation format : almost done
