@@ -84,10 +84,10 @@ def VSWEPParser(bs, idWeaponMaterial = 0):
 	vertices = VSVertexSection(bs, groups, VSbones)
 	if polygonPtr != bs.getOffset():
 		bs.setOffset(polygonPtr)
-	faces = VSFacesSection(bs, numPoly, numGroups, numTri, numQuad, len(vertices))
+	faces = VSFacesSection(bs, numPoly, numGroups, numTri, numQuad, len(vertices), "WEP")
 	if texturePtr != bs.getOffset():
 		bs.setOffset(texturePtr)
-	textures = VSTexturesSection(bs, True, True)
+	textures = VSTexturesSection(bs, True, False, False)
 	materials = []
 	for i in range(0, len(textures)):
 		mat = NoeMaterial("mat_"+str(i), textures[i].name)
@@ -142,20 +142,32 @@ def VSSHPParser(bs):
 	bones = []
 	for i in range(0, len(VSbones)):
 		bones.append(VSbones[i].toNoeBone())
+	if groupPtr != bs.getOffset():
+		bs.setOffset(groupPtr)	
 	groups = VSGroupSection(bs, numGroups, VSbones)
 	if vertexPtr != bs.getOffset():
 		bs.setOffset(vertexPtr)
 	vertices = VSVertexSection(bs, groups, VSbones)
-	faces = VSFacesSection(bs, numPoly, numGroups, numTri, numQuad, len(vertices))
+	if polygonPtr != bs.getOffset():
+		bs.setOffset(polygonPtr)
+	faces = VSFacesSection(bs, numPoly, numGroups, numTri, numQuad, len(vertices), "SHP")
+	if AKAOPtr != bs.getOffset():
+		bs.setOffset(AKAOPtr)
 	bs.seek(magicPtr-AKAOPtr, NOESEEK_REL)
 	num = int(bs.read('I')[0])
 	magicNum = int(bs.read('I')[0])
 	if magicNum + bs.getOffset() < bs.getSize():
-		bs.seek(magicNum, NOESEEK_REL)	
-	textures = VSTexturesSection(bs, False, True)
+		bs.seek(magicNum, NOESEEK_REL)
 	materials = []
-	for i in range(0, len(textures)):
-		materials.append(NoeMaterial("mat_"+str(i), textures[i].name))
+	textures = []
+	excp = False
+	if (len(faces) > 0):
+		if (faces[0].type == 0x34 or faces[0].type == 0x3C):
+			excp = True
+	if bs.getOffset() + 8 < bs.getSize():
+		textures = VSTexturesSection(bs, False, excp, False)
+		for i in range(0, len(textures)):
+			materials.append(NoeMaterial("mat_"+str(i), textures[i].name))
 	meshes = VSBuildModel(bones, groups, vertices, faces, textures, materials)
 	anims = []
 	NMM = NoeModelMaterials(textures, materials)
@@ -188,25 +200,27 @@ def VSLoadSequence(data, mdlList):
 		animations[i].getData(bs, basePtr, dataPtr, animations)
 
 	seqPath = rapi.getExtensionlessName(rapi.getInputName())
-	modelPath = str(seqPath).split('_')[0]+".SHP"
+	h = seqPath.split("\\")
+	modelPath = rapi.getDirForFilePath(rapi.getInputName())+ str(h[len(h)-1]).split('_')[0]+".SHP"
+	print("modelPath : "+modelPath)
 	if rapi.checkFileExists(modelPath):
 		modelData = rapi.loadIntoByteArray(modelPath)
 		VSLoadModel(modelData, mdlList)
-	model = mdlList[0]
+		model = mdlList[0]
 
-	noeAnims = []
-	boneSizes = []
-	boneModes = []
-	for i in range(0, numBones):
-		matrix = model.bones[i].getMatrix()
-		boneSizes.append(matrix[0][1])
-		boneModes.append(matrix[0][2])
-		matrix[0] = NoeVec3((1, 0.0, 0.0))
-		model.bones[i].setMatrix(matrix)
-	for i in range(0, numAnimations):
-		noeAnims.append(animations[i].build(model, boneSizes, boneModes))
-	#noeAnims.append(animations[0].build(model, boneSizes, boneModes))
-	model.setAnims(noeAnims)
+		noeAnims = []
+		boneSizes = []
+		boneModes = []
+		for i in range(0, numBones):
+			matrix = model.bones[i].getMatrix()
+			boneSizes.append(matrix[0][1])
+			boneModes.append(matrix[0][2])
+			matrix[0] = NoeVec3((1, 0.0, 0.0))
+			model.bones[i].setMatrix(matrix)
+		for i in range(0, numAnimations):
+			noeAnims.append(animations[i].build(model, boneSizes, boneModes))
+		#noeAnims.append(animations[0].build(model, boneSizes, boneModes))
+		model.setAnims(noeAnims)
 	return 1
 def VSLoadARM(data, mdlList):
 	bs = NoeBitStream(data)
@@ -311,7 +325,7 @@ class ZNDParser():
 				return self.materials[i]
 		return None
 	def getTIM(self, idx):
-		x = ( idx * 64 ) % 1024;
+		x = ( idx * 64 ) % 1024
 		y = math.floor( ( idx * 64 ) / 1024 )
 		lt = len(self.tims)
 		for i in range (0, lt):
@@ -465,7 +479,7 @@ def VSLoadMPD(data, mdlList):
 						idxList.append(iv+1)
 						idxList.append(iv+2)
 						idxList.append(iv+3)
-						iv += 4;
+						iv += 4
 					else:
 						posList.append(f.p1)
 						posList.append(f.p2)
@@ -479,7 +493,7 @@ def VSLoadMPD(data, mdlList):
 						idxList.append(iv+2)
 						idxList.append(iv+1)
 						idxList.append(iv+0)
-						iv += 3;
+						iv += 3
 
 				if z != None:
 					mat = z.getMaterial(m.textureId, m.clutId, textures, materials)
@@ -671,50 +685,54 @@ def VSVertexSection(bs, groups, bones):
 		vertices.append(vertex)
 
 	return vertices
-def VSFacesSection(bs, numPoly, numGroups, numTri, numQuad, vertices):
+def VSFacesSection(bs, numPoly, numGroups, numTri, numQuad, vertices, mode):
 	#print("VSFacesSection #"+str(bs.getOffset()))
 	faces = []
 	for i in range(0, numPoly):
 		face = VSFace()
 		face.default()
-
-		if ".SHP" in rapi.getInputName():
-			if "26.SHP" in rapi.getInputName():
-				face.BrainStorm(bs, vertices)
-			elif "B1.SHP" in rapi.getInputName():
-				face.BrainStorm(bs, vertices)
-
-			if numGroups > 1:
-				face.hydrate(bs)
+		if mode == "SHP":
+			excp = ["26", "3A", "3B", "65", "6A", "6B", "AC", "B1", "B2", "B3", "B4"
+			, "B5", "B6", "B7", "B8", "B9", "BA", "BB", "BC", "BD", "BC", "BE", "BF"
+			, "C0", "C1", "C2", "C3"]
+			
+			path = rapi.getExtensionlessName(rapi.getInputName())
+			h = path.split("\\")
+			modelId = str(h[len(h)-1]).split('_')[0]
+			if modelId in excp:
+				face.BrainStorm(bs)
 			else:
-				if i < (numTri):
-					face.OpTri(bs)
-				elif i < numTri + numQuad:
-					face.OpQuad(bs)
-				else:
+				if numGroups > 1:
 					face.hydrate(bs)
+				else:
+					if i < (numTri):
+						face.OpTri(bs)
+					elif i < numTri + numQuad:
+						face.OpQuad(bs)
+					else:
+						face.hydrate(bs)
 		else:
 			face.hydrate(bs)
 
 		#print(repr(face))
-		if face.type == 0x2C: # if quad
-			if face.side == 8: # double
-				faces.append(VSFace(0x24, face.size, face.side, face.alpha, 3, [face.vertices[2], face.vertices[1], face.vertices[0]], [face.uv[2], face.uv[1], face.uv[0]]))
-				faces.append(VSFace(0x24, face.size, face.side, face.alpha, 3, [face.vertices[1], face.vertices[2], face.vertices[3]], [face.uv[1], face.uv[2], face.uv[3]]))
-				faces.append(VSFace(0x24, face.size, face.side, face.alpha, 3, [face.vertices[0], face.vertices[1], face.vertices[2]], [face.uv[0], face.uv[1], face.uv[2]]))
-				faces.append(VSFace(0x24, face.size, face.side, face.alpha, 3, [face.vertices[3], face.vertices[2], face.vertices[1]], [face.uv[3], face.uv[2], face.uv[1]]))
+		if face.type == 0x2C or face.type == 0x3C: # if quad
+			if face.side != 4: # double
+				faces.append(VSFace(face.type, face.size, face.side, face.alpha, 3, [face.vertices[0], face.vertices[1], face.vertices[2]], [face.uv[0], face.uv[1], face.uv[2]], [face.colors[0], face.colors[1], face.colors[2]]))
+				faces.append(VSFace(face.type, face.size, face.side, face.alpha, 3, [face.vertices[3], face.vertices[2], face.vertices[1]], [face.uv[3], face.uv[2], face.uv[1]], [face.colors[3], face.colors[2], face.colors[1]]))
+				faces.append(VSFace(face.type, face.size, face.side, face.alpha, 3, [face.vertices[2], face.vertices[1], face.vertices[0]], [face.uv[2], face.uv[1], face.uv[0]], [face.colors[0], face.colors[2], face.colors[1]]))
+				faces.append(VSFace(face.type, face.size, face.side, face.alpha, 3, [face.vertices[1], face.vertices[2], face.vertices[3]], [face.uv[1], face.uv[2], face.uv[3]], [face.colors[1], face.colors[2], face.colors[3]]))
 			else:
-				faces.append(VSFace(0x24, face.size, face.side, face.alpha, 3, [face.vertices[2], face.vertices[1], face.vertices[0]], [face.uv[2], face.uv[1], face.uv[0]]))
-				faces.append(VSFace(0x24, face.size, face.side, face.alpha, 3, [face.vertices[1], face.vertices[2], face.vertices[3]], [face.uv[1], face.uv[2], face.uv[3]]))
-		elif face.type == 0x24: # if triangle
-			if face.side == 8: # double
-				faces.append(VSFace(0x24, face.size, face.side, face.alpha, 3, [face.vertices[2], face.vertices[1], face.vertices[0]], [face.uv[0], face.uv[2], face.uv[1]]))
-				faces.append(VSFace(0x24, face.size, face.side, face.alpha, 3, [face.vertices[0], face.vertices[1], face.vertices[2]], [face.uv[2], face.uv[1], face.uv[0]]))
+				faces.append(VSFace(face.type, face.size, face.side, face.alpha, 3, [face.vertices[0], face.vertices[1], face.vertices[2]], [face.uv[0], face.uv[1], face.uv[2]], [face.colors[0], face.colors[1], face.colors[2]]))
+				faces.append(VSFace(face.type, face.size, face.side, face.alpha, 3, [face.vertices[3], face.vertices[2], face.vertices[1]], [face.uv[3], face.uv[2], face.uv[1]], [face.colors[3], face.colors[2], face.colors[1]]))
+		elif face.type == 0x24 or face.type == 0x34: # if triangle
+			if face.side != 4: # double
+				faces.append(VSFace(face.type, face.size, face.side, face.alpha, 3, [face.vertices[0], face.vertices[1], face.vertices[2]], [face.uv[1], face.uv[2], face.uv[0]], [face.colors[0], face.colors[1], face.colors[2]]))
+				faces.append(VSFace(face.type, face.size, face.side, face.alpha, 3, [face.vertices[2], face.vertices[1], face.vertices[0]], [face.uv[0], face.uv[2], face.uv[1]], [face.colors[2], face.colors[1], face.colors[0]]))
 			else:
-				faces.append(VSFace(0x24, face.size, face.side, face.alpha, 3, [face.vertices[2], face.vertices[1], face.vertices[0]], [face.uv[0], face.uv[2], face.uv[1]]))
+				faces.append(VSFace(face.type, face.size, face.side, face.alpha, 3, [face.vertices[0], face.vertices[1], face.vertices[2]], [face.uv[1], face.uv[2], face.uv[0]], [face.colors[0], face.colors[1], face.colors[2]]))
 
 	return faces
-def VSTexturesSection(bs, isWep, drawTex = True):
+def VSTexturesSection(bs, isWep, excp = False, drawTex = False):
 	textures = []
 	palletColors = []
 	texMapSize, unk, halfW, halfH, numColor = bs.read('I4B')
@@ -740,14 +758,22 @@ def VSTexturesSection(bs, isWep, drawTex = True):
 				for j in range(0, numColor):
 					colorData = bs.readBits(16)
 					colors.append(colorData)
-				textures.append(NoeTexture("tex_"+str(i), halfW*2, halfH*2, None))
+				if excp == True:
+					textures.append(NoeTexture("tex_"+str(i), halfW*4, halfH*2, None))
+				else:
+					textures.append(NoeTexture("tex_"+str(i), halfW*2, halfH*2, None))
 				palletColors.append(colors)
 
 		cluts = []
 		for x in range(0, halfW*2):
 			for y in range(0, halfH*2):
-				clut = bs.read('B')[0] #CLUT colour reference
-				cluts.append(clut)
+				if excp == True:
+					id = bs.read('B')[0]
+					cluts.append(id%16)
+					cluts.append(id // 16)
+				else:
+					clut = bs.read('B')[0] #CLUT colour reference
+					cluts.append(clut)
 
 		for i in range(0, numPallets):
 			pixmap = bytearray()
@@ -773,14 +799,12 @@ def VSBuildModel(bones, groups, vertices, faces, textures, materials, matId = 0)
 	else:
 		hasTex = False
 
-	if ("26.SHP" in rapi.getInputName() or "B1.SHP" in rapi.getInputName()):
-		hasTex = False
-
 	lb = len(bones)
 	idxList = []
 	posList = []
 	uvList = []
 	wList = []
+	colList = []
 	for i in range (0, lb):
 		lf = len(faces)
 		for x in range(0, lf):
@@ -795,14 +819,18 @@ def VSBuildModel(bones, groups, vertices, faces, textures, materials, matId = 0)
 							indices = [vertices[faces[x].vertices[y]].bone.index+int(lb/2)]
 							weights = [1]
 							wList.append(NoeVertWeight(indices, weights))
+							colList.append(faces[x].colors[y])
 
 	if len(posList)/3 >= 1:
 		if hasTex == True:
 			mesh = NoeMesh(idxList, posList, "mesh_"+str(i), material.name)
 			mesh.setUVs(uvList)
 			mesh.setWeights(wList)
+			mesh.setColors(colList)
 		else :
 			mesh = NoeMesh(idxList, posList, "mesh_"+str(i))
+			mesh.setWeights(wList)
+			mesh.setColors(colList)
 		meshes.append(mesh)
 	return meshes
 
@@ -820,7 +848,7 @@ class VSBone:
 	def hydrate(self, bs, index, bones):
 		self.index = index
 		self.name = "bone_"+str(index)
-		self.length = -int(bs.read('h')[0])
+		self.length = int(bs.read('h')[0])
 		bs.seek(0x2, NOESEEK_REL)
 		self.parentIndex = bs.read('b')[0]
 		self.offset = NoeVec3(bs.read('3b'))
@@ -883,13 +911,13 @@ class VSVertex:
 		self.idx = i
 		self.group = group
 		self.bone = bone
-		self.position = NoeVec3(bs.read('3h'))
+		self.position = -NoeVec3(bs.read('3h'))
 		bs.seek(0x2, NOESEEK_REL)
 		#print(self)
 	def __repr__(self):
 		return "(VSVertex :" + str(self.idx) + "," + str(self.bone.index) + "," + repr(self.position) + ")"
 class VSFace:
-	def __init__(self, _type = 0, size = 0, side = 0, alpha = 0, verticesCount = 3, vertices = [], uv = []):
+	def __init__(self, _type = 0, size = 0, side = 0, alpha = 0, verticesCount = 3, vertices = [], uv = [], colors = []):
 		self.type = _type
 		self.size = size
 		self.side = side
@@ -897,6 +925,7 @@ class VSFace:
 		self.verticesCount = verticesCount
 		self.vertices = vertices
 		self.uv = uv
+		self.colors = colors
 	def default(self):
 		self.type = 0
 		self.size = 0
@@ -905,6 +934,7 @@ class VSFace:
 		self.verticesCount = 3
 		self.vertices = []
 		self.uv = []
+		self.colors = []
 	def hydrate(self, bs):
 		self.type, self.size, self.side, self.alpha = bs.read('4B')
 		# self.side = [0, 4, 7, 8, 11]
@@ -917,41 +947,41 @@ class VSFace:
 			self.vertices.append(idx)
 		for i in range(0, self.verticesCount):
 			self.uv.append(bs.read('2B'))
+			self.colors.append(NoeVec4([0,0,0,0]))
 		#print(self)
-	def BrainStorm(self, bs, vmax):
+	def BrainStorm(self, bs):
+		#  vt1  vt2  vt3  u1-v1 col1  t  col2   sz col3   sd u2-v2  u3-v3
+		#  vt1  vt2  vt3  vt4   col1  t  col2   sz col3   sd col4   pa u1-v1 u2-v2 u3-v3 u4-v4
 		vIdx = bs.read('4H')
-		if ((vIdx[0]/4 < vmax) and (vIdx[1]/4 < vmax) and (vIdx[2]/4 < vmax) and (vIdx[3]/4 < vmax)): # good chance it's a quad
-			self.type = 0x2C
+		self.colors.append(NoeVec3(bs.read('3B')).toVec4())
+		self.type = bs.read('B')[0]
+		self.colors.append(NoeVec3(bs.read('3B')).toVec4())
+		self.size = bs.read('B')[0]
+		self.colors.append(NoeVec3(bs.read('3B')).toVec4())
+		self.side = bs.read('B')[0]
+		if self.type == 52:
+			self.verticesCount = 3
+			for i in range(0, 3):
+				self.vertices.append(int(vIdx[i]/4))
+				self.colors[i][3] = 255
+			self.uv.append((vIdx[3]).to_bytes(2, 'little'))
+			self.uv.append(bs.read('2B'))
+			self.uv.append(bs.read('2B'))
+		elif self.type == 60:
 			self.verticesCount = 4
-			for i in range(0, self.verticesCount):
-				idx = int(vIdx[i]/4)
-				self.vertices.append(idx)
-				self.uv.append([0,0])
 			for i in range(0, 4):
-				nums = bs.read("4B")
-
-		else:
-			if ((vIdx[0]/4 < vmax) and (vIdx[1]/4 < vmax) and (vIdx[2]/4 < vmax)):
-				self.type = 0x24
-				self.verticesCount = 3
-				for i in range(0, self.verticesCount):
-					idx = int(vIdx[i]/4)
-					self.vertices.append(idx)
-					self.uv.append([0,0])
-				for i in range(0, 4):
-					nums = bs.read("4B")
-			else:
-				self.type = 0x0
-				###
-
-
-
+				self.vertices.append(int(vIdx[i]/4))
+			self.colors.append(NoeVec3(bs.read('3B')).toVec4())
+			bs.read('B') # padding
+			for i in range(0, 4):
+				self.uv.append(bs.read('2B'))
+				self.colors[i][3] = 255	
+		#print(self)
 	def OpTri(self, bs):
 		self.type = 0x24
 		self.verticesCount = 3
 		for i in range(0, self.verticesCount):
-			idx = int(bs.read('H')[0]/4)
-			self.vertices.append(idx)
+			self.vertices.append(int(bs.read('H')[0]/4))
 		for i in range(0, self.verticesCount):
 			self.uv.append(bs.read('2B'))
 		for i in range(0, self.verticesCount):
@@ -961,8 +991,7 @@ class VSFace:
 		self.type = 0x2C
 		self.verticesCount = 4
 		for i in range(0, self.verticesCount):
-			idx = int(bs.read('H')[0]/4)
-			self.vertices.append(idx)
+			self.vertices.append(int(bs.read('H')[0]/4))
 		for i in range(0, self.verticesCount):
 			self.uv.append(bs.read('2B'))
 		for i in range(0, self.verticesCount):
@@ -1364,8 +1393,8 @@ class VSAnim:
 		self.trans = []
 		self.base = None
 	def hydrate(self, bs, index, numBones):
-		self.idx = index;
-		self.numBones = numBones;
+		self.idx = index
+		self.numBones = numBones
 		self.length = bs.read('H')[0]
 		# some animations use a different animation as base
 		self.idOtherAnimation = bs.read('b')[0]
@@ -1404,7 +1433,7 @@ class VSAnim:
 			self.pose.append([ rx, ry, rz ])
 
 			# readKeyframes
-			f = 0;
+			f = 0
 			while True:
 				op = None
 				op = self.readOpcode(bs)
@@ -1525,22 +1554,22 @@ class VSAnim:
 				kfBone.setScale(kscls, noesis.NOEKF_SCALE_SCALAR_1, noesis.NOEKF_INTERPOLATE_LINEAR)
 				kfBones.append(kfBone)
 		
-		for i in range(0, self.numBones):
-			kfBone = NoeKeyFramedBone(i+self.numBones)
-			ktrss = []
-			krots = []
-			kscls = []
+		#for i in range(0, self.numBones):
+		#	kfBone = NoeKeyFramedBone(i+self.numBones)
+		#	ktrss = []
+		#	krots = []
+		#	kscls = []
 
-			krots.append(NoeKeyFramedValue(0.0, NoeQuat((0,0,0,0))))
-			kscls.append(NoeKeyFramedValue(0.0, 1.0))
-			if i > 0 and i < len(boneSizes):
-				ktrss.append(NoeKeyFramedValue(0.0, NoeVec3((boneSizes[i], 0, 0))))
-			else : 
-				ktrss.append(NoeKeyFramedValue(0.0, NoeVec3((0, 0, 0))))
-			kfBone.setTranslation(ktrss, noesis.NOEKF_TRANSLATION_VECTOR_3, noesis.NOEKF_INTERPOLATE_LINEAR)
-			kfBone.setRotation(krots, noesis.NOEKF_ROTATION_QUATERNION_4, noesis.NOEKF_INTERPOLATE_LINEAR)
-			kfBone.setScale(kscls, noesis.NOEKF_SCALE_SCALAR_1, noesis.NOEKF_INTERPOLATE_LINEAR)
-			kfBones.append(kfBone)
+		#	krots.append(NoeKeyFramedValue(0.0, NoeQuat((0,0,0,0))))
+		#	kscls.append(NoeKeyFramedValue(0.0, 1.0))
+		#	if i > 0 and i < len(boneSizes):
+		#		ktrss.append(NoeKeyFramedValue(0.0, NoeVec3((boneSizes[i], 0, 0))))
+		#	else : 
+		#		ktrss.append(NoeKeyFramedValue(0.0, NoeVec3((0, 0, 0))))
+		#	kfBone.setTranslation(ktrss, noesis.NOEKF_TRANSLATION_VECTOR_3, noesis.NOEKF_INTERPOLATE_LINEAR)
+		#	kfBone.setRotation(krots, noesis.NOEKF_ROTATION_QUATERNION_4, noesis.NOEKF_INTERPOLATE_LINEAR)
+		#	kfBone.setScale(kscls, noesis.NOEKF_SCALE_SCALAR_1, noesis.NOEKF_INTERPOLATE_LINEAR)
+		#	kfBones.append(kfBone)
 
 		kAnim = NoeKeyFramedAnim("anim_"+str(self.idx), model.bones, kfBones, 24.0)
 		return kAnim
@@ -1555,7 +1584,7 @@ def quatFromAxisAnle(axis, angle):
 	q = NoeQuat((_x, _y, _z, _w)).normalize()
 	return q
 def rot13toRad(angle):
-	return angle*(1/4096)*math.pi
+	return angle*(math.pi/4096)
 
 
 def color16to32( c ):
