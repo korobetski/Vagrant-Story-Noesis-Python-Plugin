@@ -66,12 +66,12 @@ def VSWEPParser(bs, idWeaponMaterial = 0):
 	numPoly = numTri+numQuad+numFace
 	#print("numBones : "+str(numBones)+" 	numGroups : "+str(numGroups)+" 	numTri : "+str(numTri)+" 	numQuad : "+str(numQuad)+" 	numFace : "+str(numFace))
 	dec = bs.getOffset()+4
-	texturePtr1 = bs.read('I')[0]+dec #pointer to texture - $10
+	texturePtr1 = bs.readUInt()+dec #pointer to texture - $10
 	bs.seek(0x30, NOESEEK_REL) # Unknown (always zero)
-	texturePtr = int(bs.read('I')[0])+dec #relative pointer to texture section - $10
-	groupPtr = bs.read('I')[0]+dec
-	vertexPtr = bs.read('I')[0]+dec
-	polygonPtr = bs.read('I')[0]+dec
+	texturePtr = bs.readUInt()+dec #relative pointer to texture section - $10
+	groupPtr = bs.readUInt()+dec
+	vertexPtr = bs.readUInt()+dec
+	polygonPtr = bs.readUInt()+dec
 	VSbones = VSBoneSection(bs, numBones)
 	bones = []
 	for i in range(0, len(VSbones)):
@@ -131,13 +131,13 @@ def VSSHPParser(bs):
 		bs.seek(0x4, NOESEEK_REL) # LBA XXSP0X.SEQ (special attack animations)	
 	bs.seek(0x20, NOESEEK_REL) # unknown (probably more LBA tables, there are also special attack ids stored here.)
 	dec = bs.getOffset()+4
-	magicPtr = bs.read('I')[0] + dec # pointer to magic effects section (relative to offset $F8)
+	magicPtr = bs.readUInt() + dec # pointer to magic effects section (relative to offset $F8)
 	for i in range(0, 0x18):
 		bs.seek(0x2, NOESEEK_REL) # unknown (noticeable effects when casting spell
-	AKAOPtr = bs.read('I')[0] + dec # relative pointer to AKAO section (relative to offset $F8)
-	groupPtr = bs.read('I')[0] + dec # relative pointer to groups section (relative to offset $F8)
-	vertexPtr = bs.read('I')[0] + dec # relative pointer to vertex section (relative to offset $F8)
-	polygonPtr = bs.read('I')[0] + dec # relative pointer to polygon section (relative to offset $F8)
+	AKAOPtr = bs.readUInt() + dec # relative pointer to AKAO section (relative to offset $F8)
+	groupPtr = bs.readUInt() + dec # relative pointer to groups section (relative to offset $F8)
+	vertexPtr = bs.readUInt() + dec # relative pointer to vertex section (relative to offset $F8)
+	polygonPtr = bs.readUInt() + dec # relative pointer to polygon section (relative to offset $F8)
 	VSbones = VSBoneSection(bs, numBones)
 	bones = []
 	for i in range(0, len(VSbones)):
@@ -154,8 +154,8 @@ def VSSHPParser(bs):
 	if AKAOPtr != bs.getOffset():
 		bs.setOffset(AKAOPtr)
 	bs.seek(magicPtr-AKAOPtr, NOESEEK_REL)
-	num = int(bs.read('I')[0])
-	magicNum = int(bs.read('I')[0])
+	num = bs.readUInt()
+	magicNum = bs.readUInt()
 	if magicNum + bs.getOffset() < bs.getSize():
 		bs.seek(magicNum, NOESEEK_REL)
 	materials = []
@@ -808,6 +808,7 @@ def VSBuildModel(bones, groups, vertices, faces, textures, materials, matId = 0)
 	for i in range (0, lb):
 		lf = len(faces)
 		for x in range(0, lf):
+			#print(repr(faces[x].colors))
 			if len(faces[x].vertices) == 3 and int(faces[x].vertices[0]) < len(vertices):
 				if (i == vertices[faces[x].vertices[0]].bone.index):
 					for y in range(0, 3):
@@ -819,18 +820,18 @@ def VSBuildModel(bones, groups, vertices, faces, textures, materials, matId = 0)
 							indices = [vertices[faces[x].vertices[y]].bone.index+int(lb/2)]
 							weights = [1]
 							wList.append(NoeVertWeight(indices, weights))
-							colList.append(faces[x].colors[y])
+							colList.append(faces[x].colors[y]/255)
 
 	if len(posList)/3 >= 1:
 		if hasTex == True:
 			mesh = NoeMesh(idxList, posList, "mesh_"+str(i), material.name)
+			mesh.setColors(colList)
 			mesh.setUVs(uvList)
 			mesh.setWeights(wList)
-			mesh.setColors(colList)
 		else :
 			mesh = NoeMesh(idxList, posList, "mesh_"+str(i))
-			mesh.setWeights(wList)
 			mesh.setColors(colList)
+			mesh.setWeights(wList)
 		meshes.append(mesh)
 	return meshes
 
@@ -950,20 +951,22 @@ class VSFace:
 			self.colors.append(NoeVec4([0,0,0,0]))
 		#print(self)
 	def BrainStorm(self, bs):
-		#  vt1  vt2  vt3  u1-v1 col1  t  col2   sz col3   sd u2-v2  u3-v3
-		#  vt1  vt2  vt3  vt4   col1  t  col2   sz col3   sd col4   pa u1-v1 u2-v2 u3-v3 u4-v4
+		# Triangle vt1  vt2  vt3  u1-v1 col1  t  col2   sz col3   sd u2-v2  u3-v3
+		# Quad     vt1  vt2  vt3  vt4   col1  t  col2   sz col3   sd col4   pa u1-v1 u2-v2 u3-v3 u4-v4
+		self.colors = []
 		vIdx = bs.read('4H')
 		self.colors.append(NoeVec3(bs.read('3B')).toVec4())
-		self.type = bs.read('B')[0]
+		self.type = bs.readByte()
 		self.colors.append(NoeVec3(bs.read('3B')).toVec4())
-		self.size = bs.read('B')[0]
+		self.size = bs.readByte()
 		self.colors.append(NoeVec3(bs.read('3B')).toVec4())
-		self.side = bs.read('B')[0]
+		self.side = bs.readByte()
 		if self.type == 52:
 			self.verticesCount = 3
 			for i in range(0, 3):
 				self.vertices.append(int(vIdx[i]/4))
 				self.colors[i][3] = 255
+			# uv1 at the same place of vt4 for quads
 			self.uv.append((vIdx[3]).to_bytes(2, 'little'))
 			self.uv.append(bs.read('2B'))
 			self.uv.append(bs.read('2B'))
@@ -976,7 +979,7 @@ class VSFace:
 			for i in range(0, 4):
 				self.uv.append(bs.read('2B'))
 				self.colors[i][3] = 255	
-		#print(self)
+		#print(repr(self.colors))
 	def OpTri(self, bs):
 		self.type = 0x24
 		self.verticesCount = 3
@@ -1272,7 +1275,7 @@ class MDPFace:
 		self.textureId = 0
 		self.p1 = self.p2 = self.p3 = self.p4 = self.n = NoeVec3((0,0,0))
 	def hydrate(self, bs, isQuad):
-		self.quad = isQuad;
+		self.quad = isQuad
 		self.p1x, self.p1y, self.p1z = bs.read("3h")
 		self.p2x, self.p2y, self.p2z = bs.read("3b")
 		self.p3x, self.p3y, self.p3z = bs.read("3b")
