@@ -8,10 +8,7 @@ Vagrant Story files formats are mostly explained here : http://datacrystal.romha
 
 Some parts of this script (.SEQ & TIM) is simply a python version of a javascript original script : https://github.com/morris/vstools
 
-
-Project moved here : https://github.com/korobetski/Vagrant-Story-Unity-Parser
-
-
+# Supported formats :
 - .WEP Weapon Model format is fully supported
 - .SHP reader is fully fonctionnal but need to be linked with .SEQ for bones position (colored vertex SHP supported too)
 - .SEQ Animation format : almost done
@@ -20,8 +17,12 @@ Project moved here : https://github.com/korobetski/Vagrant-Story-Unity-Parser
 - .ZND reader ok
 - .MPD Map format is fully supported and linked with .ZND for Textures (Thanks to VSTool)
 
+# This repository is no longer intended to be updated, new projects replace it : 
+- https://github.com/korobetski/Vagrant-Story-Unity-Parser 
+- https://github.com/korobetski/blender-vagrant-story
+
+# Discord : https://discord.gg/dXvJNVD
 
 <img src="https://github.com/korobetski/Vagrant-Story-Noesis-Python-Plugin/raw/master/65.png"/>
-
 <img src="https://github.com/korobetski/Vagrant-Story-Noesis-Python-Plugin/raw/master/The_Rene_Coastroad.jpg"/>
 <img src="https://github.com/korobetski/Vagrant-Story-Noesis-Python-Plugin/raw/master/ashley.jpg"/>
